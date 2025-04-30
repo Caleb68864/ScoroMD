@@ -25,6 +25,9 @@ interface ScoroSettings {
   userId: string;      // The user ID for time entries
   syncIntervalHours: number; // How often to sync (in hours, 0 for manual only)
   dailyNotesFolder: string; // Folder path for daily notes (default: Daily)
+  clientsFolder: string; // Folder path for clients (default: Clients)
+  projectsFolderName: string; // Name of the projects folder within each client folder (default: Projects)
+  tasksFolderName: string; // Name of the tasks folder within each project folder (default: Tasks)
 }
 
 /**
@@ -36,7 +39,10 @@ const DEFAULT_SETTINGS: ScoroSettings = {
   companyId: '',
   userId: '',
   syncIntervalHours: 24,
-  dailyNotesFolder: 'Daily'
+  dailyNotesFolder: 'Daily',
+  clientsFolder: 'Clients',
+  projectsFolderName: 'Projects',
+  tasksFolderName: 'Tasks'
 };
 
 /**
@@ -333,6 +339,67 @@ class ScoroSettingTab extends PluginSettingTab {
         
         return textInput;
       });
+      
+    // Clients Folder setting with efficient folder selection
+    new Setting(containerEl)
+      .setName('Clients Folder')
+      .setDesc('Folder path for clients data (e.g., Clients or Data/Clients)')
+      .addText(text => {
+        const textInput = text
+          .setPlaceholder('Clients')
+          .setValue(this.plugin.settings.clientsFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.clientsFolder = value || 'Clients';
+            await this.plugin.saveSettings();
+          });
+          
+        // Add button to open folder selector
+        textInput.inputEl.style.width = "180px"; // Make room for button
+        
+        const browseButton = createEl('button', {
+          text: 'Browse',
+          cls: 'mod-cta'
+        });
+        browseButton.style.marginLeft = "10px";
+        
+        browseButton.addEventListener('click', () => {
+          // Create and open folder selector modal
+          new FolderSuggestModal(this.app, (folder) => {
+            textInput.setValue(folder);
+            this.plugin.settings.clientsFolder = folder || 'Clients';
+            this.plugin.saveSettings();
+          }).open();
+        });
+        
+        // Insert button after input element
+        textInput.inputEl.parentElement?.appendChild(browseButton);
+        
+        return textInput;
+      });
+    
+    // Projects Folder Name setting
+    new Setting(containerEl)
+      .setName('Projects Folder Name')
+      .setDesc('Name of the projects folder within each client folder')
+      .addText(text => text
+        .setPlaceholder('Projects')
+        .setValue(this.plugin.settings.projectsFolderName)
+        .onChange(async (value) => {
+          this.plugin.settings.projectsFolderName = value || 'Projects';
+          await this.plugin.saveSettings();
+        }));
+    
+    // Tasks Folder Name setting
+    new Setting(containerEl)
+      .setName('Tasks Folder Name')
+      .setDesc('Name of the tasks folder within each project folder')
+      .addText(text => text
+        .setPlaceholder('Tasks')
+        .setValue(this.plugin.settings.tasksFolderName)
+        .onChange(async (value) => {
+          this.plugin.settings.tasksFolderName = value || 'Tasks';
+          await this.plugin.saveSettings();
+        }));
 
     // Sync Interval setting
     new Setting(containerEl)

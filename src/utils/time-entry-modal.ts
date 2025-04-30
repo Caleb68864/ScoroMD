@@ -284,7 +284,7 @@ export class TimeEntryModal extends Modal {
   private async loadData() {
     try {
       // Load clients
-      const clientsFolder = this.app.vault.getAbstractFileByPath('Clients') as TFolder;
+      const clientsFolder = this.app.vault.getAbstractFileByPath(this.vaultService.getClientsFolder()) as TFolder;
       if (clientsFolder && clientsFolder instanceof TFolder) {
         this.clients = clientsFolder.children
           .filter(folder => folder instanceof TFolder)
@@ -305,7 +305,7 @@ export class TimeEntryModal extends Modal {
       this.contacts = allFiles
         .filter(file => 
           file.path.match(/Logic\/Employees\/.*\.md/) || 
-          file.path.match(/Clients\/.*\/Contacts\/.*\.md/)
+          file.path.match(new RegExp(`${this.vaultService.getClientsFolder()}\\/.*\\/Contacts\\/.*\\.md`))
         )
         .map(file => file.basename);
       
@@ -336,8 +336,9 @@ export class TimeEntryModal extends Modal {
       return;
     }
     
-    const projectPath = `Clients/${client}/Projects`;
-    const projectFolder = this.app.vault.getAbstractFileByPath(projectPath) as TFolder;
+    const clientFolder = this.vaultService.getClientFolderPath(client);
+    const projectFolderPath = `${clientFolder}/${this.vaultService.getProjectsFolderName()}`;
+    const projectFolder = this.app.vault.getAbstractFileByPath(projectFolderPath) as TFolder;
     
     if (projectFolder && projectFolder instanceof TFolder) {
       const clientProjects = projectFolder.children
@@ -361,7 +362,7 @@ export class TimeEntryModal extends Modal {
    * @private
    */
   private async loadTasksForProject(client: string, project: string) {
-    const tasksPath = `Clients/${client}/Projects/${project}/Tasks`;
+    const tasksPath = this.vaultService.getTasksFolderPath(client, project);
     const tasksFolder = this.app.vault.getAbstractFileByPath(tasksPath) as TFolder;
     
     if (tasksFolder && tasksFolder instanceof TFolder) {

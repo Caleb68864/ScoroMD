@@ -34,17 +34,20 @@ export class SyncService {
   async syncClients() {
     try {
       const response = await this.api.getClients();
-      const clientsFolder = 'Clients';
+      const clientsFolder = this.vault.getClientsFolder();
       await this.vault.ensureFolder(clientsFolder);
 
       for (const client of response.items) {
-        const clientFolder = `${clientsFolder}/${client.company_name}`;
+        const clientFolder = this.vault.getClientFolderPath(client.company_name);
         await this.vault.ensureFolder(clientFolder);
-        await this.vault.ensureFolder(`${clientFolder}/Projects`);
+        
+        // Create the projects folder within the client folder
+        const projectsFolderPath = `${clientFolder}/${this.vault.getProjectsFolderName()}`;
+        await this.vault.ensureFolder(projectsFolderPath);
 
         const clientNote = this.createClientNote(client);
         await this.vault.createOrUpdateNote(
-          `${clientFolder}/Client.md`,
+          `${clientFolder}/${client.company_name}.md`,
           clientNote
         );
       }
@@ -60,15 +63,27 @@ export class SyncService {
       const response = await this.api.getProjects();
       
       for (const project of response.items) {
-        const clientFolder = `Clients/${project.company_name}`;
-        const projectFolder = `${clientFolder}/Projects/${project.project_name}`;
+        // Safe access to properties with possible undefined values
+        const companyName = project.company_name || '';
+        const projectName = project.name || '';
+        
+        const projectFolder = this.vault.getProjectFolderPath(
+          companyName, 
+          projectName
+        );
         
         await this.vault.ensureFolder(projectFolder);
-        await this.vault.ensureFolder(`${projectFolder}/Tasks`);
+        
+        // Create the tasks folder within the project folder
+        const tasksFolderPath = this.vault.getTasksFolderPath(
+          companyName, 
+          projectName
+        );
+        await this.vault.ensureFolder(tasksFolderPath);
 
         const projectNote = this.createProjectNote(project);
         await this.vault.createOrUpdateNote(
-          `${projectFolder}/Project.md`,
+          `${projectFolder}/${projectName}.md`,
           projectNote
         );
       }
@@ -87,7 +102,17 @@ export class SyncService {
         if (!task.project_id) continue;
 
         const projectInfo = await this.api.getProject(task.project_id);
-        const taskPath = `Clients/${projectInfo.company_name}/Projects/${projectInfo.project_name}/Tasks/${task.event_name}.md`;
+        if (!projectInfo) continue;
+        
+        // Safe access to properties with possible undefined values
+        const companyName = projectInfo.company_name || '';
+        const projectName = projectInfo.name || '';
+        
+        const taskPath = this.vault.getTaskPath(
+          companyName,
+          projectName,
+          task.event_name
+        );
         const taskNote = this.createTaskNote(task);
         
         await this.vault.createOrUpdateNote(taskPath, taskNote);
@@ -270,7 +295,8 @@ ${this.formatAddress(client.address)}
 ## Projects
 \`\`\`dataview
 TABLE status, deadline as "Due Date", manager_id as "Manager"
-FROM "Clients/${client.company_name}/Projects"
+FROM "${this.vault.getClientsFolder()}/${client.company_name}/${this.vault.getProjectsFolderName()}"
+WHERE file.name = file.folder.name
 SORT deadline ASC
 \`\`\`
 `;
@@ -279,19 +305,19 @@ SORT deadline ASC
   private createProjectNote(project: any): string {
     return `---
 project_id: ${project.project_id}
-project_name: ${project.project_name}
+project_name: ${project.project_name || project.name}
 status: ${project.status}
 deadline: ${project.deadline}
 manager_id: ${project.manager_id}
 last_synced: ${new Date().toISOString()}
 ---
 
-# ${project.project_name}
+# ${project.project_name || project.name}
 
 ## Tasks
 \`\`\`dataview
 TABLE status, datetime_due as "Due Date", related_users as "Assigned To"
-FROM "Clients/${project.company_name}/Projects/${project.project_name}/Tasks"
+FROM "${this.vault.getClientsFolder()}/${project.company_name}/${this.vault.getProjectsFolderName()}/${project.project_name || project.name}/${this.vault.getTasksFolderName()}"
 SORT datetime_due ASC
 \`\`\`
 `;
@@ -315,7 +341,7 @@ ${task.description || ''}
 ## Time Entries
 \`\`\`dataview
 TABLE duration, description
-FROM "Daily"
+FROM "${this.vault.getDailyNotesFolder()}"
 WHERE contains(time_entry_task_id, "${task.task_id}")
 SORT file.day DESC
 \`\`\`

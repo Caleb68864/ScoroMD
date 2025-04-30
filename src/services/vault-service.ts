@@ -41,9 +41,12 @@ class SimpleChoiceModal extends Modal {
 export class VaultService {
   private dailyNotesFolder: string = 'Daily';
   private dailyNotesFormat: string = 'YYYY-MM-DD'; // Default format
+  private clientsFolder: string = 'Clients';
+  private projectsFolderName: string = 'Projects';
+  private tasksFolderName: string = 'Tasks';
 
   constructor(private app: App) {
-    // Get the dailyNotesFolder and format setting if available
+    // Get the settings if available
     try {
       const plugin = (this.app as any).plugins?.plugins['scoro-md'];
       if (plugin && plugin.settings) {
@@ -58,6 +61,21 @@ export class VaultService {
         } else {
           // If no custom format, try to detect from daily notes plugin
           this.detectDailyNotesFormat();
+        }
+        
+        // Get clients folder
+        if (plugin.settings.clientsFolder) {
+          this.clientsFolder = plugin.settings.clientsFolder;
+        }
+        
+        // Get projects folder name
+        if (plugin.settings.projectsFolderName) {
+          this.projectsFolderName = plugin.settings.projectsFolderName;
+        }
+        
+        // Get tasks folder name
+        if (plugin.settings.tasksFolderName) {
+          this.tasksFolderName = plugin.settings.tasksFolderName;
         }
       }
     } catch (error) {
@@ -625,5 +643,38 @@ export class VaultService {
       NotificationService.showError(`Failed to create time entry in daily note`, error);
       throw error;
     }
+  }
+
+  // Getter methods for folder paths
+  getClientsFolder(): string {
+    return this.clientsFolder;
+  }
+  
+  getProjectsFolderName(): string {
+    return this.projectsFolderName;
+  }
+  
+  getTasksFolderName(): string {
+    return this.tasksFolderName;
+  }
+
+  getDailyNotesFolder(): string {
+    return this.dailyNotesFolder;
+  }
+  
+  getClientFolderPath(clientName: string): string {
+    return `${this.clientsFolder}/${clientName}`;
+  }
+  
+  getProjectFolderPath(clientName: string, projectName: string): string {
+    return `${this.clientsFolder}/${clientName}/${this.projectsFolderName}/${projectName}`;
+  }
+  
+  getTasksFolderPath(clientName: string, projectName: string): string {
+    return `${this.clientsFolder}/${clientName}/${this.projectsFolderName}/${projectName}/${this.tasksFolderName}`;
+  }
+  
+  getTaskPath(clientName: string, projectName: string, taskName: string): string {
+    return `${this.clientsFolder}/${clientName}/${this.projectsFolderName}/${projectName}/${this.tasksFolderName}/${taskName}.md`;
   }
 } 
