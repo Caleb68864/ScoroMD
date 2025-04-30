@@ -181,15 +181,21 @@ SORT deadline ASC
    - Check your internet connection
    - Ensure your API key has proper permissions
 
-2. **Missing Data**:
+2. **CORS Issues**:
+   - The plugin uses Obsidian's built-in request handling to avoid CORS issues
+   - If you see CORS errors in the console logs, try the "Test Scoro API Connection" command
+   - Make sure your Scoro API URL is correct and doesn't have double slashes
+   - If problems persist, contact your Scoro administrator to verify API access settings
+
+3. **Missing Data**:
    - Confirm you've performed a sync after setting up the plugin
    - Check that the entities exist in Scoro
 
-3. **Time Entry Sync Issues**:
+4. **Time Entry Sync Issues**:
    - Make sure the time entry format in daily notes is correct
    - Verify the referenced projects and tasks exist
 
-4. **Plugin Not Loading**:
+5. **Plugin Not Loading**:
    - Check that the plugin is enabled in Obsidian settings
    - Restart Obsidian after making setting changes
 

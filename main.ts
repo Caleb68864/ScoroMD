@@ -75,7 +75,8 @@ export default class ScoroSyncPlugin extends Plugin {
       apiBase: this.settings.apiBase,
       apiKey: this.settings.apiKey,
       companyId: this.settings.companyId,
-      userId: this.settings.userId
+      userId: this.settings.userId,
+      mode: 'obsidian' // Use obsidian mode to avoid CORS issues
     });
     this.vaultService = new VaultService(this.app);
     this.syncService = new SyncService(apiService, this.vaultService);
@@ -132,6 +133,38 @@ export default class ScoroSyncPlugin extends Plugin {
       name: 'Add Time Entry',
       callback: () => {
         this.openTimeEntryModal();
+      }
+    });
+
+    // Register command to test API connection
+    this.addCommand({
+      id: 'scoro-test-connection',
+      name: 'Test Scoro API Connection',
+      callback: async () => {
+        try {
+          // Check if required settings are missing
+          const missingSettings = this.validateRequiredSettings();
+          if (missingSettings.length > 0) {
+            const missingList = missingSettings.join(', ');
+            NotificationService.showError(`Cannot connect: Required settings missing: ${missingList}`);
+            return;
+          }
+          
+          // Create a temporary API service just for testing
+          const apiService = new ScoroApiService({
+            apiBase: this.settings.apiBase,
+            apiKey: this.settings.apiKey,
+            companyId: this.settings.companyId,
+            userId: this.settings.userId,
+            mode: 'obsidian' // Use obsidian mode to avoid CORS issues
+          });
+          
+          // Try to fetch a single client as a test
+          await apiService.getClients();
+          NotificationService.showSuccess('Successfully connected to Scoro API');
+        } catch (error) {
+          NotificationService.showError('API connection test failed', error);
+        }
       }
     });
 

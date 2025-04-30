@@ -20,6 +20,7 @@ import {
   ScoroTask,
   ScoroTimeEntry
 } from '../models/scoro-types';
+import { requestUrl, RequestUrlParam } from 'obsidian';
 
 /**
  * Configuration interface for the Scoro API service
@@ -29,6 +30,7 @@ export interface ScoroApiConfig {
   apiKey: string;     // API key for authentication
   companyId: string;  // Company account ID in Scoro
   userId: string;     // User ID for time entries and other operations
+  mode?: 'direct' | 'obsidian';  // API request mode - direct uses fetch, obsidian uses requestUrl
 }
 
 /**
@@ -72,7 +74,12 @@ export class ScoroApiService {
     try {
       this.validateConfig();
 
-      const url = `${this.config.apiBase}/api/v2/${path}`;
+      // Ensure we don't have double slashes in the URL
+      const baseUrl = this.config.apiBase.endsWith('/') 
+        ? this.config.apiBase.slice(0, -1) 
+        : this.config.apiBase;
+        
+      const url = `${baseUrl}/api/v2/${path}`;
       const payload = {
         lang: 'eng',
         company_account_id: this.config.companyId,
@@ -80,21 +87,50 @@ export class ScoroApiService {
         ...body
       };
 
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) {
-        throw new ScoroApiError(`HTTP error ${res.status}`, {
-          status: res.status,
-          statusText: res.statusText,
-          url: path
+      // Default to obsidian mode for CORS handling
+      const mode = this.config.mode || 'obsidian';
+      
+      let data: ScoroResponse<T>;
+      
+      if (mode === 'direct') {
+        // Use direct fetch API (may encounter CORS issues)
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
         });
-      }
 
-      const data = await res.json() as ScoroResponse<T>;
+        if (!res.ok) {
+          throw new ScoroApiError(`HTTP error ${res.status}`, {
+            status: res.status,
+            statusText: res.statusText,
+            url: path
+          });
+        }
+
+        data = await res.json() as ScoroResponse<T>;
+      } else {
+        // Use Obsidian's requestUrl to avoid CORS issues
+        const requestOptions: RequestUrlParam = {
+          url: url,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        };
+
+        const res = await requestUrl(requestOptions);
+
+        if (res.status !== 200) {
+          throw new ScoroApiError(`HTTP error ${res.status}`, {
+            status: res.status,
+            statusText: res.status.toString(),
+            url: path
+          });
+        }
+
+        data = res.json as ScoroResponse<T>;
+      }
+      
       if (data.status !== 'OK') {
         throw new ScoroApiError('API returned error status', {
           status: data.status,
