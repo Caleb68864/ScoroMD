@@ -1,0 +1,10 @@
+{
+  "id": "scoro-md",
+  "name": "ScoroMD",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Sync Scoro data (clients, projects, tasks, time entries) with Obsidian",
+  "author": "Caleb Bennett",
+  "authorUrl": "https://github.com/CalebBennett",
+  "isDesktopOnly": false
+} 
