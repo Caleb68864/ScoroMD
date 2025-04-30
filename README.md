@@ -11,12 +11,14 @@ This plugin synchronizes data between your Scoro account and Obsidian vault, ena
 
 ### Manual Installation
 1. Download the latest release from the [releases page](https://github.com/CalebBennett/ScoroMD/releases)
-2. Extract the files to your Obsidian plugins folder:
-   - Windows: `%APPDATA%\Obsidian\plugins\scoro-md\`
-   - macOS: `~/Library/Application Support/obsidian/plugins/scoro-md/`
-   - Linux: `~/.config/obsidian/plugins/scoro-md/`
-3. Restart Obsidian
-4. Enable the plugin in Obsidian's Community Plugins settings
+2. Extract the zip file
+3. Copy the extracted folder to your Obsidian vault's plugins folder:
+   - Open your Obsidian vault
+   - Go to Settings → Community plugins → Browse (folder icon)
+   - This opens your vault's plugins folder
+   - Paste the extracted folder here
+4. Restart Obsidian
+5. Enable the plugin in Obsidian's Community Plugins settings
 
 ## Configuration
 
@@ -203,6 +205,22 @@ If you encounter issues:
 2. Install dependencies: `npm install`
 3. Build the plugin: `npm run dev`
 4. Copy `main.js`, `manifest.json`, and `styles.css` to your vault's plugins folder
+
+### Creating a Release
+
+#### Automatic Release (GitHub)
+1. Update the version in `package.json`, `manifest.json`, and `versions.json`
+2. Create and push a new tag matching the version:
+   ```
+   git tag -a 1.0.0 -m "Release v1.0.0"
+   git push origin 1.0.0
+   ```
+3. GitHub Actions will automatically build and create a release
+
+#### Manual Release
+1. Update the version in `package.json`, `manifest.json`, and `versions.json`
+2. Run the release script: `release.bat` (Windows) 
+3. The release ZIP file will be created in the `releases` folder
 
 ## License
 

@@ -30,4 +30,7 @@ main.js
 *.js.map
 
 # Deployment script (specific to local development)
-deploy.bat 
+deploy.bat
+
+# Release files
+releases/ 
