@@ -31,6 +31,8 @@ export interface ScoroApiConfig {
   companyId: string;  // Company account ID in Scoro
   userId: string;     // User ID for time entries and other operations
   mode?: 'direct' | 'obsidian';  // API request mode - direct uses fetch, obsidian uses requestUrl
+  developerMode?: boolean;  // Optional developer mode
+  includePersonContacts?: boolean;  // Optional setting to include person contacts
 }
 
 /**
@@ -38,7 +40,22 @@ export interface ScoroApiConfig {
  * Provides methods for fetching and manipulating Scoro data
  */
 export class ScoroApiService {
-  constructor(private config: ScoroApiConfig) {}
+  private developerMode: boolean;
+  
+  constructor(private config: ScoroApiConfig) {
+    this.developerMode = config.developerMode || false;
+  }
+
+  /**
+   * Logs debug information if developerMode is enabled
+   * @param message Debug message
+   * @param data Optional data to log
+   */
+  private log(message: string, data?: any) {
+    if (this.developerMode) {
+      console.log(`[ScoroMD API] ${message}`, data || '');
+    }
+  }
 
   /**
    * Validates that all required configuration fields are present
@@ -72,6 +89,7 @@ export class ScoroApiService {
    */
   async post<T>(path: string, body: any = {}): Promise<T> {
     try {
+      this.log('Validating API config');
       this.validateConfig();
 
       // Ensure we don't have double slashes in the URL
@@ -87,13 +105,17 @@ export class ScoroApiService {
         ...body
       };
 
+      this.log('Making API request', { url, method: 'POST', payload });
+
       // Default to obsidian mode for CORS handling
       const mode = this.config.mode || 'obsidian';
+      this.log('Using API mode', mode);
       
       let data: ScoroResponse<T>;
       
       if (mode === 'direct') {
         // Use direct fetch API (may encounter CORS issues)
+        this.log('Using direct fetch API');
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -101,6 +123,7 @@ export class ScoroApiService {
         });
 
         if (!res.ok) {
+          this.log('Fetch API request failed', { status: res.status, statusText: res.statusText });
           throw new ScoroApiError(`HTTP error ${res.status}`, {
             status: res.status,
             statusText: res.statusText,
@@ -108,9 +131,11 @@ export class ScoroApiService {
           });
         }
 
+        this.log('Fetch API request successful, parsing response');
         data = await res.json() as ScoroResponse<T>;
       } else {
         // Use Obsidian's requestUrl to avoid CORS issues
+        this.log('Using Obsidian requestUrl API');
         const requestOptions: RequestUrlParam = {
           url: url,
           method: 'POST',
@@ -118,9 +143,12 @@ export class ScoroApiService {
           body: JSON.stringify(payload)
         };
 
+        this.log('RequestUrl options', requestOptions);
         const res = await requestUrl(requestOptions);
+        this.log('RequestUrl response', { status: res.status, headers: res.headers });
 
         if (res.status !== 200) {
+          this.log('RequestUrl request failed', { status: res.status });
           throw new ScoroApiError(`HTTP error ${res.status}`, {
             status: res.status,
             statusText: res.status.toString(),
@@ -128,19 +156,66 @@ export class ScoroApiService {
           });
         }
 
+        this.log('RequestUrl request successful, parsing response');
         data = res.json as ScoroResponse<T>;
       }
       
+      this.log('API response received', { status: data.status, data: data });
+      
       if (data.status !== 'OK') {
+        this.log('API returned non-OK status', {
+          status: data.status,
+          statusCode: data.statusCode,
+          messages: data.messages,
+          url: path,
+          data: data
+        });
+        console.error('API returned non-OK status', {
+          status: data.status,
+          statusCode: data.statusCode,
+          messages: data.messages,
+          url: path,
+          data: data
+        });
         throw new ScoroApiError('API returned error status', {
           status: data.status,
+          statusCode: data.statusCode,
           messages: data.messages,
           url: path
         });
       }
 
+      // Check if expected data structure exists before returning
+      if (!data.data) {
+        this.log('Invalid API response format - missing data property', {
+          status: data.status,
+          response: data,
+          url: path
+        });
+        console.error('Invalid API response format', {
+          status: data.status,
+          response: data,
+          url: path
+        });
+        throw new ScoroApiError('Invalid API response format', {
+          status: data.status,
+          response: data,
+          url: path
+        });
+      }
+
+      this.log('API request completed successfully', { path });
       return data.data;
     } catch (error) {
+      this.log('Error in API request', {
+        path: path,
+        error: error
+      });
+      console.error('Error in API request', {
+        path: path,
+        error: error
+      });
+      
       if (error instanceof ScoroError) {
         throw error;
       }
@@ -156,13 +231,69 @@ export class ScoroApiService {
   /**
    * Fetches the list of clients from Scoro
    * Filters to only include companies with type 'customer'
+   * Also filters out contacts with type 'person' by default (configurable in settings)
    * 
    * @returns Promise resolving to an array of ScoroClient objects
    */
   async getClients() {
-    return this.post<ScoroListResponse<ScoroClient>>('contacts/list', {
+    const response = await this.post<ScoroListResponse<ScoroClient>>('contacts/list', {
       request: { company_type: 'customer' }
     });
+    
+    // Use any type for flexible property access 
+    let anyResponse = response as any;
+    
+    if (this.developerMode) {
+      console.log(`[ScoroMD Debug] Raw API response for clients:`, anyResponse);
+    }
+    
+    // The response structure might be different than expected
+    // If we have 'data' array but no 'items', map data to items
+    if (!anyResponse.items && anyResponse.data && Array.isArray(anyResponse.data)) {
+      if (this.developerMode) {
+        console.log(`[ScoroMD Debug] Converting data array to items for clients`, anyResponse.data.length);
+      }
+      anyResponse.items = anyResponse.data;
+    }
+    
+    // Handle case where response is directly an array
+    if (!anyResponse.items && Array.isArray(anyResponse)) {
+      if (this.developerMode) {
+        console.log(`[ScoroMD Debug] Response is directly an array, converting to items`, anyResponse.length);
+      }
+      const tempResponse = { items: anyResponse };
+      anyResponse = tempResponse;
+    }
+    
+    // Ensure response has items array
+    if (!anyResponse.items) {
+      if (this.developerMode) {
+        console.log(`[ScoroMD Debug] No items found in response, creating empty array`);
+      }
+      anyResponse.items = [];
+    }
+    
+    // Filter out contacts with contact_type="person" unless includePersonContacts is true
+    const includePersonContacts = this.config.includePersonContacts || false;
+    if (!includePersonContacts && Array.isArray(anyResponse.items)) {
+      const originalCount = anyResponse.items.length;
+      anyResponse.items = anyResponse.items.filter((client: any) => 
+        client.contact_type !== 'person'
+      );
+      
+      if (this.developerMode) {
+        console.log(`[ScoroMD Debug] Filtered out ${originalCount - anyResponse.items.length} person contacts`);
+      }
+    }
+    
+    if (this.developerMode) {
+      console.log(`[ScoroMD Debug] Final processed client response:`, {
+        itemsLength: anyResponse.items?.length,
+        firstFew: anyResponse.items?.slice(0, 3)
+      });
+    }
+    
+    return anyResponse as ScoroListResponse<ScoroClient>;
   }
 
   // Project-related methods
@@ -173,7 +304,14 @@ export class ScoroApiService {
    * @returns Promise resolving to an array of ScoroProject objects
    */
   async getProjects() {
-    return this.post<ScoroListResponse<ScoroProject>>('projects/list');
+    const response = await this.post<ScoroListResponse<ScoroProject>>('projects/list');
+    
+    // Ensure response has items array
+    if (!response.items) {
+      response.items = [];
+    }
+    
+    return response;
   }
 
   /**
@@ -194,7 +332,14 @@ export class ScoroApiService {
    * @returns Promise resolving to an array of ScoroTask objects
    */
   async getTasks() {
-    return this.post<ScoroListResponse<ScoroTask>>('tasks/list');
+    const response = await this.post<ScoroListResponse<ScoroTask>>('tasks/list');
+    
+    // Ensure response has items array
+    if (!response.items) {
+      response.items = [];
+    }
+    
+    return response;
   }
 
   /**
@@ -234,9 +379,16 @@ export class ScoroApiService {
       requestParams.user_id = this.config.userId;
     }
     
-    return this.post<ScoroListResponse<ScoroTimeEntry>>('timeEntries/list', { 
+    const response = await this.post<ScoroListResponse<ScoroTimeEntry>>('timeEntries/list', { 
       request: requestParams 
     });
+    
+    // Ensure response has items array
+    if (!response.items) {
+      response.items = [];
+    }
+    
+    return response;
   }
 
   /**

@@ -31,6 +31,21 @@ This plugin synchronizes data between your Scoro account and Obsidian vault, ena
    - **User ID**: Your Scoro user ID for time entries
    - **Sync Interval**: How often to sync (in hours, 0 for manual only)
 
+### Sync Options
+
+You can selectively choose which types of Scoro data to sync:
+
+- **Sync Clients**: Enable/disable syncing of client information
+- **Sync Projects**: Enable/disable syncing of project information
+- **Sync Tasks**: Enable/disable syncing of task information
+- **Sync Time Entries**: Enable/disable syncing of time entries between Scoro and daily notes
+
+#### Client Sync Options
+
+- **Include Person Contacts**: By default, only company-type contacts are synced. Enable this option to also sync contacts with type "person".
+
+This allows you to customize the sync process based on your specific needs. For example, if you only want to track time entries but don't need client information, you can disable client syncing.
+
 ### Obtaining Scoro API Credentials
 
 1. **API Base URL**: This is your company's Scoro URL
@@ -77,9 +92,11 @@ To manually sync data from Scoro:
 2. Alternatively, use the command palette (Ctrl/Cmd+P) and search for "Sync All Scoro Data"
 
 During syncing:
-- The plugin will fetch clients, projects, tasks, and time entries from Scoro
+- The plugin will fetch only the data types you've enabled in the settings (clients, projects, tasks, and/or time entries)
 - It will create or update notes in your vault based on the data
 - If a note exists with the same name but is missing Scoro identifiers, you'll be prompted to choose how to handle it
+
+You can reconfigure which data types to sync at any time in the plugin settings, and your choices will apply to both automatic and manual syncing.
 
 ### Time Tracking
 
@@ -187,17 +204,44 @@ SORT deadline ASC
    - Make sure your Scoro API URL is correct and doesn't have double slashes
    - If problems persist, contact your Scoro administrator to verify API access settings
 
-3. **Missing Data**:
+3. **API Response Format Issues**:
+   - If you see errors like "response.items is not iterable", this indicates an issue with the API response format
+   - Try using the "Test Scoro API Connection" command to verify connectivity
+   - Check that your API key has the correct permissions for all required endpoints
+   - The plugin has been updated to handle variable API response formats
+
+4. **Missing Data**:
    - Confirm you've performed a sync after setting up the plugin
    - Check that the entities exist in Scoro
+   - Verify that syncing for that data type is enabled in the settings
+   - If only specific types of data are missing, check the sync settings to ensure they're enabled
+   - For missing contacts/clients, check if they are "person" type contacts (these are filtered out by default, enable the "Include Person Contacts" option to include them)
 
-4. **Time Entry Sync Issues**:
+5. **Time Entry Sync Issues**:
    - Make sure the time entry format in daily notes is correct
    - Verify the referenced projects and tasks exist
 
-5. **Plugin Not Loading**:
+6. **Plugin Not Loading**:
    - Check that the plugin is enabled in Obsidian settings
    - Restart Obsidian after making setting changes
+
+### Developer Mode
+
+The plugin includes a Developer Mode setting for troubleshooting:
+
+1. Go to Settings → ScoroMD → Advanced Settings
+2. Enable "Developer Mode"
+3. Perform the operation that was failing
+4. Check the console logs (Ctrl+Shift+I or Cmd+Option+I) for detailed information
+5. Look for logs prefixed with `[ScoroMD Debug]`, `[ScoroMD API]`, or `[ScoroMD Vault]`
+
+Developer mode logs comprehensive details about:
+- API requests and responses
+- File operations
+- Sync process steps
+- Data transformations
+
+This information is invaluable when troubleshooting API connection issues or file creation problems.
 
 ### Logs and Support
 

@@ -44,8 +44,18 @@ export class VaultService {
   private clientsFolder: string = 'Clients';
   private projectsFolderName: string = 'Projects';
   private tasksFolderName: string = 'Tasks';
+  private app: App;
+  private settings: any;
+  private developerMode: boolean = false;
 
-  constructor(private app: App) {
+  constructor(app: App) {
+    this.app = app;
+    // Get settings from the plugin
+    this.settings = (app as any).plugins.plugins['scoro-md']?.settings || {};
+    
+    // Set developer mode
+    this.developerMode = this.settings.developerMode || false;
+
     // Get the settings if available
     try {
       const plugin = (this.app as any).plugins?.plugins['scoro-md'];
@@ -77,9 +87,43 @@ export class VaultService {
         if (plugin.settings.tasksFolderName) {
           this.tasksFolderName = plugin.settings.tasksFolderName;
         }
+        
+        // Set developer mode
+        if (plugin.settings.developerMode !== undefined) {
+          this.developerMode = plugin.settings.developerMode;
+        }
+        
+        // Initialize folders
+        this.initializeFolders();
       }
     } catch (error) {
       console.error("Could not access plugin settings:", error);
+    }
+  }
+
+  /**
+   * Initialize required folders in the vault
+   * This creates the clients folder and other required base folders
+   */
+  private async initializeFolders() {
+    try {
+      // Create clients folder if it doesn't exist
+      if (this.clientsFolder) {
+        this.logDebug(`Ensuring base clients folder exists: ${this.clientsFolder}`);
+        this.ensureFolder(this.clientsFolder).catch(error => {
+          console.error(`Failed to create clients folder: ${this.clientsFolder}`, error);
+        });
+      }
+      
+      // Create daily notes folder if it doesn't exist
+      if (this.dailyNotesFolder) {
+        this.logDebug(`Ensuring base daily notes folder exists: ${this.dailyNotesFolder}`);
+        this.ensureFolder(this.dailyNotesFolder).catch(error => {
+          console.error(`Failed to create daily notes folder: ${this.dailyNotesFolder}`, error);
+        });
+      }
+    } catch (error) {
+      console.error("Error initializing folders:", error);
     }
   }
 
@@ -158,61 +202,116 @@ export class VaultService {
   }
 
   /**
-   * Sanitizes a path segment (folder or file name) by removing invalid characters
-   * @param pathSegment The path segment to sanitize
-   * @returns Sanitized path segment
+   * Sanitizes a value from Scoro for use in paths and filenames.
+   * This should be used for all values coming from Scoro before they are used in paths.
+   * @param value The value to sanitize
+   * @returns Sanitized value safe for use in paths and filenames
    */
-  private sanitizePathSegment(pathSegment: string): string {
-    // Replace characters that are not allowed in file names
-    return pathSegment.replace(/[*"\\/<>:|?]/g, '_');
+  private sanitizeScoro(value: string): string {
+    if (!value) return '';
+
+    return value
+      // Replace characters that are definitely not allowed in paths
+      .replace(/[*"<>:|?]/g, '')
+      // Normalize multiple spaces to single space
+      .replace(/\s+/g, ' ')
+      // Preserve underscores
+      // Replace remaining periods with underscores (except extensions)
+      .replace(/\.(?!\w+$)/g, '_')
+      // Remove trailing periods
+      .replace(/\.+$/, '')
+      .trim();
   }
 
   /**
-   * Sanitizes a full path by sanitizing each path segment
-   * @param path The path to sanitize
+   * Sanitizes a path or path segment for safe file system usage.
+   * This is the main method that should be used for all path sanitization.
+   * @param path The path or path segment to sanitize
+   * @param options Optional configuration for sanitization
    * @returns Sanitized path
    */
-  private sanitizePath(path: string): string {
-    // Split the path by / and sanitize each segment
-    const segments = path.split('/');
-    const sanitizedSegments = segments.map(segment => {
-      // Don't sanitize empty segments (e.g., between consecutive slashes)
-      if (segment === '') return segment;
-      return this.sanitizePathSegment(segment);
-    });
-    return sanitizedSegments.join('/');
+  private sanitizePath(path: string, options: {
+    preserveUnderscores?: boolean;  // Whether to preserve underscores or convert to spaces
+    preserveSlashes?: boolean;      // Whether to preserve path separators
+  } = {}): string {
+    if (!path) return '';
+
+    const {
+      preserveUnderscores = true, // Changed default to true to preserve underscores
+      preserveSlashes = false
+    } = options;
+
+    // Split path into segments if we're preserving the structure
+    const segments = preserveSlashes ? path.split(/[/\\]+/) : [path];
+
+    return segments.map(segment => {
+      // Handle file extension
+      const extensionMatch = segment.match(/(\.[a-zA-Z0-9]+)$/);
+      let basename = segment;
+      let extension = '';
+      
+      if (extensionMatch) {
+        extension = extensionMatch[0];
+        basename = segment.substring(0, segment.length - extension.length);
+      }
+
+      // Replace invalid characters
+      let sanitized = basename
+        // Replace characters that are definitely not allowed
+        .replace(/[*"<>:|?]/g, '')
+        // Normalize multiple spaces to single space
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      // Handle underscores based on option
+      if (!preserveUnderscores) {
+        sanitized = sanitized
+          .replace(/_ /g, ' ')
+          .replace(/ _/g, ' ')
+          .replace(/ _ /g, ' ')
+          .replace(/_/g, ' ');
+      }
+
+      // Clean up periods
+      sanitized = sanitized
+        .replace(/\.+$/, '')  // Remove trailing periods
+        .replace(/\.(?!\w+$)/g, '_'); // Replace remaining periods with underscores (except extensions)
+
+      // Ensure we have a valid name
+      if (!sanitized) {
+        sanitized = 'unnamed';
+      }
+
+      // Add back extension if it existed
+      if (extension) {
+        sanitized += extension;
+      }
+
+      return sanitized;
+    }).join(preserveSlashes ? '/' : ' ');
   }
 
   /**
-   * Properly handles a path that may contain spaces, avoiding issues with underscores
-   * @param path Path that may contain spaces
-   * @returns Path with proper folder structure
+   * Sanitizes a folder path, preserving the structure
+   * @param path The folder path to sanitize
+   * @returns Sanitized path with structure preserved
    */
-  private normalizeFolderPath(path: string): string {
-    // Replace any backslashes with forward slashes for consistency
-    let normalizedPath = path.replace(/\\/g, '/');
-    
-    // Check if the path needs to be split
-    // This addresses the issue where "Calendar Notes/Daily Notes" becomes "Calendar Notes_Daily Notes"
-    if (normalizedPath.includes(' ') && !normalizedPath.includes('/')) {
-      // Split by spaces that should be treated as folder separators
-      if (normalizedPath.includes('Daily Notes')) {
-        // Special case for "Calendar Notes Daily Notes" style paths
-        normalizedPath = normalizedPath.replace('Daily Notes', '/Daily Notes');
-      } else {
-        // Generic case for other paths with spaces that should be folders
-        const segments = normalizedPath.split(/\s+/);
-        normalizedPath = segments.join('/');
-      }
-    }
-    
-    return normalizedPath;
+  private sanitizeFolderPath(path: string): string {
+    return this.sanitizePath(path, { preserveSlashes: true, preserveUnderscores: true });
+  }
+
+  /**
+   * Sanitizes a file or folder name (single segment)
+   * @param name The name to sanitize
+   * @returns Sanitized name
+   */
+  private sanitizeFileName(name: string): string {
+    return this.sanitizePath(name, { preserveUnderscores: true });
   }
 
   getDailyNotePath(date: Date): string {
-    // Normalize and sanitize the daily notes folder path
-    const normalizedFolder = this.normalizeFolderPath(this.dailyNotesFolder);
-    const sanitizedFolder = this.sanitizePath(normalizedFolder);
+    // Sanitize the daily notes folder path
+    const sanitizedFolder = this.sanitizePath(this.dailyNotesFolder, { preserveSlashes: true });
     
     // Format the date according to the format string
     const dateStr = this.formatDate(date, this.dailyNotesFormat);
@@ -222,33 +321,71 @@ export class VaultService {
 
   async ensureFolder(path: string): Promise<void> {
     try {
-      // Sanitize path
-      const sanitizedPath = this.sanitizePath(path);
-      
-      if (sanitizedPath !== path) {
-        console.log(`Path sanitized from "${path}" to "${sanitizedPath}"`);
+      if (this.developerMode) {
+        console.log(`[ScoroMD Debug] Ensuring folder exists: ${path}`);
       }
       
-      if (sanitizedPath === '') return;
+      // Sanitize path
+      const sanitizedPath = this.sanitizeFolderPath(path);
+      
+      if (sanitizedPath !== path) {
+        console.log(`[ScoroMD Debug] Path sanitized from "${path}" to "${sanitizedPath}"`);
+      }
+      
+      if (sanitizedPath === '') {
+        console.log(`[ScoroMD Debug] Empty path after sanitization, skipping folder creation`);
+        return;
+      }
       
       const folderExists = await this.app.vault.adapter.exists(sanitizedPath);
+      if (this.developerMode) {
+        console.log(`[ScoroMD Debug] Folder exists check for "${sanitizedPath}": ${folderExists}`);
+      }
+      
       if (!folderExists) {
         // Create folders recursively by splitting the path
         const segments = sanitizedPath.split('/');
+        if (this.developerMode) {
+          console.log(`[ScoroMD Debug] Creating folder segments: ${segments.join(', ')}`);
+        }
+        
         let currentPath = '';
         
         for (const segment of segments) {
           if (segment === '') continue;
           
           currentPath += (currentPath ? '/' : '') + segment;
+          if (this.developerMode) {
+            console.log(`[ScoroMD Debug] Checking segment path: ${currentPath}`);
+          }
+          
           const exists = await this.app.vault.adapter.exists(currentPath);
+          if (this.developerMode) {
+            console.log(`[ScoroMD Debug] Segment exists check for "${currentPath}": ${exists}`);
+          }
           
           if (!exists) {
-            await this.app.vault.createFolder(currentPath);
+            if (this.developerMode) {
+              console.log(`[ScoroMD Debug] Creating folder: ${currentPath}`);
+            }
+            try {
+              await this.app.vault.createFolder(currentPath);
+              if (this.developerMode) {
+                console.log(`[ScoroMD Debug] Successfully created folder: ${currentPath}`);
+              }
+            } catch (folderError) {
+              console.error(`[ScoroMD Debug] Error creating folder "${currentPath}":`, folderError);
+              throw folderError;
+            }
           }
+        }
+      } else {
+        if (this.developerMode) {
+          console.log(`[ScoroMD Debug] Folder already exists: ${sanitizedPath}`);
         }
       }
     } catch (error) {
+      console.error(`[ScoroMD Debug] Exception in ensureFolder for path "${path}":`, error);
       NotificationService.showError(`Failed to ensure folder: ${path}`, error);
       throw error;
     }
@@ -257,7 +394,7 @@ export class VaultService {
   async createOrUpdateNote(path: string, content: string): Promise<void> {
     try {
       // Sanitize path
-      const sanitizedPath = this.sanitizePath(path);
+      const sanitizedPath = this.sanitizeFolderPath(path);
       
       if (sanitizedPath !== path) {
         console.log(`Path sanitized from "${path}" to "${sanitizedPath}"`);
@@ -313,6 +450,12 @@ export class VaultService {
             }
             
             return;
+          } else {
+            // This is an existing Scoro note - update only the frontmatter
+            const updatedContent = this.mergeFrontMatterPreservingContent(existingContent, content);
+            await this.app.vault.modify(file, updatedContent);
+            NotificationService.showInfo(`Updated Scoro data in: ${sanitizedPath}`);
+            return;
           }
         }
         
@@ -325,6 +468,80 @@ export class VaultService {
       NotificationService.showError(`Failed to create/update note: ${path}`, error);
       throw error;
     }
+  }
+
+  /**
+   * Merges the frontmatter from new content into existing content, preserving user content
+   * @param existingContent The existing note content
+   * @param newContent The new content with updated frontmatter
+   * @returns The merged content with updated frontmatter and preserved body
+   */
+  private mergeFrontMatterPreservingContent(existingContent: string, newContent: string): string {
+    // Extract frontmatter from new content
+    const newFrontmatterMatch = newContent.match(/^---\s*\n((?:.*\n)*?)---\s*\n/);
+    if (!newFrontmatterMatch) return existingContent; // No frontmatter in new content
+    
+    const newFrontmatter = newFrontmatterMatch[1];
+    
+    // Check if existing content has frontmatter
+    const existingFrontmatterMatch = existingContent.match(/^---\s*\n((?:.*\n)*?)---\s*\n([\s\S]*)/);
+    if (!existingFrontmatterMatch) {
+      // No frontmatter in existing content, add it
+      return `---\n${newFrontmatter}---\n\n${existingContent}`;
+    }
+    
+    // Get the body content after the frontmatter
+    const existingBody = existingFrontmatterMatch[2];
+    
+    // Check if this is a task note with description section to update
+    let updatedBody = existingBody;
+    
+    // Look for the new section heading followed by blockquote format
+    const newDescriptionMatch = newContent.match(/## SCORO_DESCRIPTION\s*\n>([\s\S]*?)(?=\n\n##|$)/);
+    const existingDescriptionMatch = existingBody.match(/## SCORO_DESCRIPTION\s*\n>([\s\S]*?)(?=\n\n##|$)/);
+    
+    if (newDescriptionMatch && existingDescriptionMatch) {
+      // Update the description section while preserving the rest of the content
+      updatedBody = existingBody.replace(
+        /## SCORO_DESCRIPTION\s*\n>([\s\S]*?)(?=\n\n##|$)/,
+        newDescriptionMatch[0]
+      );
+    } else if (newDescriptionMatch && !existingDescriptionMatch) {
+      // Add the description section at the beginning of the content if it doesn't exist
+      updatedBody = newDescriptionMatch[0] + '\n\n' + existingBody;
+    }
+    
+    // For backward compatibility, also check for the old formats
+    if (!newDescriptionMatch && !existingDescriptionMatch) {
+      // Check for the callout format
+      const calloutNewMatch = newContent.match(/> \[!SCORO_DESCRIPTION\][\s\S]*?(?=\n\n[^>]|$)/);
+      const calloutExistingMatch = existingBody.match(/> \[!SCORO_DESCRIPTION\][\s\S]*?(?=\n\n[^>]|$)/);
+      
+      if (calloutNewMatch && calloutExistingMatch) {
+        updatedBody = existingBody.replace(
+          /> \[!SCORO_DESCRIPTION\][\s\S]*?(?=\n\n[^>]|$)/,
+          calloutNewMatch[0]
+        );
+      } else if (calloutNewMatch && !calloutExistingMatch) {
+        updatedBody = calloutNewMatch[0] + '\n\n' + existingBody;
+      } else {
+        // Check for the HTML comment format
+        const htmlNewMatch = newContent.match(/<!-- SCORO_DESCRIPTION_START -->([\s\S]*?)<!-- SCORO_DESCRIPTION_END -->/);
+        const htmlExistingMatch = existingBody.match(/<!-- SCORO_DESCRIPTION_START -->([\s\S]*?)<!-- SCORO_DESCRIPTION_END -->/);
+        
+        if (htmlNewMatch && htmlExistingMatch) {
+          updatedBody = existingBody.replace(
+            /<!-- SCORO_DESCRIPTION_START -->([\s\S]*?)<!-- SCORO_DESCRIPTION_END -->/,
+            htmlNewMatch[0]
+          );
+        } else if (htmlNewMatch && !htmlExistingMatch) {
+          updatedBody = htmlNewMatch[0] + '\n\n' + existingBody;
+        }
+      }
+    }
+    
+    // Replace the frontmatter in the existing content
+    return `---\n${newFrontmatter}---\n\n${updatedBody}`;
   }
 
   private async showUserPrompt(message: string, options: string[]): Promise<string> {
@@ -498,7 +715,7 @@ export class VaultService {
           description: description,
           task_id: taskId,
           time_entry_id: timeEntryId,
-          file_path: filePath
+          file_path: this.sanitizeFolderPath(filePath)
         };
 
         entries.push(entry);
@@ -510,7 +727,7 @@ export class VaultService {
 
   private getDateFromFilePath(filePath: string): Date | null {
     // First try to extract date from the filename itself
-    const fileName = filePath.split('/').pop()?.replace('.md', '') || '';
+    const fileName = this.sanitizeFolderPath(filePath).split('/').pop()?.replace('.md', '') || '';
     
     // Try various date formats in the filename
     const datePatterns = [
@@ -535,7 +752,7 @@ export class VaultService {
     }
     
     // If no match in filename, try to extract from folder structure (for nested daily notes)
-    const pathSegments = filePath.split('/');
+    const pathSegments = this.sanitizeFolderPath(filePath).split('/');
     if (pathSegments.length >= 4) {
       // Try to extract from nested folder structure (yyyy/mm/dd.md)
       const fileName = pathSegments[pathSegments.length - 1];
@@ -580,11 +797,11 @@ export class VaultService {
         await this.ensureFolder(folderPath);
       }
       
-      // Sanitize data before creating content
-      const sanitizedClient = this.sanitizePathSegment(data.client);
-      const sanitizedProject = this.sanitizePathSegment(data.project);
-      const sanitizedTask = this.sanitizePathSegment(data.task);
-      const sanitizedPeople = data.people.map(person => this.sanitizePathSegment(person));
+      // Sanitize data from Scoro
+      const sanitizedClient = this.sanitizeScoro(data.client);
+      const sanitizedProject = this.sanitizeScoro(data.project);
+      const sanitizedTask = this.sanitizeScoro(data.task);
+      const sanitizedPeople = data.people.map(person => this.sanitizeScoro(person));
       
       // Build the time entry content
       let content = `\n## ${data.startTime} - ${data.endTime}`;
@@ -647,34 +864,77 @@ export class VaultService {
 
   // Getter methods for folder paths
   getClientsFolder(): string {
-    return this.clientsFolder;
+    return this.sanitizePath(this.clientsFolder, { preserveSlashes: true });
   }
   
   getProjectsFolderName(): string {
-    return this.projectsFolderName;
+    return this.sanitizePath(this.projectsFolderName);
   }
   
   getTasksFolderName(): string {
-    return this.tasksFolderName;
+    return this.sanitizePath(this.tasksFolderName);
   }
 
   getDailyNotesFolder(): string {
-    return this.dailyNotesFolder;
+    return this.sanitizePath(this.dailyNotesFolder, { preserveSlashes: true });
   }
   
   getClientFolderPath(clientName: string): string {
-    return `${this.clientsFolder}/${clientName}`;
+    const sanitizedBase = this.getClientsFolder();
+    const sanitizedClient = this.sanitizeScoro(clientName);
+    return `${sanitizedBase}/${sanitizedClient}`;
   }
   
   getProjectFolderPath(clientName: string, projectName: string): string {
-    return `${this.clientsFolder}/${clientName}/${this.projectsFolderName}/${projectName}`;
+    const clientPath = this.getClientFolderPath(clientName);
+    const projectsFolder = this.getProjectsFolderName();
+    const sanitizedProject = this.sanitizeScoro(projectName);
+    return `${clientPath}/${projectsFolder}/${sanitizedProject}`;
   }
   
   getTasksFolderPath(clientName: string, projectName: string): string {
-    return `${this.clientsFolder}/${clientName}/${this.projectsFolderName}/${projectName}/${this.tasksFolderName}`;
+    const projectPath = this.getProjectFolderPath(clientName, projectName);
+    const tasksFolder = this.getTasksFolderName();
+    return `${projectPath}/${tasksFolder}`;
   }
   
   getTaskPath(clientName: string, projectName: string, taskName: string): string {
-    return `${this.clientsFolder}/${clientName}/${this.projectsFolderName}/${projectName}/${this.tasksFolderName}/${taskName}.md`;
+    const tasksPath = this.getTasksFolderPath(clientName, projectName);
+    const sanitizedTask = this.sanitizeScoro(taskName);
+    return `${tasksPath}/${sanitizedTask}.md`;
+  }
+
+  /**
+   * Logs debug information if developerMode is enabled in settings
+   * @param message Debug message
+   * @param data Optional data to log
+   */
+  logDebug(message: string, data?: any) {
+    if (this.developerMode) {
+      console.log(`[ScoroMD Vault] ${message}`, data || '');
+    }
+  }
+  
+  /**
+   * Returns the current plugin settings
+   * @returns The plugin settings object or null if not available
+   */
+  getPluginSettings(): any {
+    return this.settings || {};
+  }
+
+  /**
+   * Check if a folder exists at the specified path
+   * @param path The path to check
+   * @returns True if the folder exists
+   */
+  async folderExists(path: string): Promise<boolean> {
+    try {
+      const normalizedPath = this.sanitizeFolderPath(path);
+      return await this.app.vault.adapter.exists(normalizedPath);
+    } catch (error) {
+      console.error(`Error checking if folder exists: ${path}`, error);
+      return false;
+    }
   }
 } 

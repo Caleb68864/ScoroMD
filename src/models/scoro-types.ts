@@ -1,12 +1,13 @@
 export interface ScoroResponse<T> {
   status: string;
+  statusCode?: string;
   messages: string[];
   data: T;
 }
 
 export interface ScoroListResponse<T> {
-  items: T[];
-  total_items: number;
+  items?: T[];
+  total_items?: number;
 }
 
 export interface ScoroClient {

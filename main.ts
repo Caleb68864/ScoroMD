@@ -7,13 +7,14 @@
  * - Automatically sync changes between the two platforms
  */
 
-import { App, Plugin, PluginSettingTab, Setting, TFolder, FuzzySuggestModal } from 'obsidian';
+import { App, Plugin } from 'obsidian';
 import { getAPI } from 'obsidian-dataview';
 import { ScoroApiService } from './src/services/scoro-api';
 import { VaultService } from './src/services/vault-service';
 import { SyncService } from './src/services/sync-service';
 import { NotificationService } from './src/utils/notifications';
 import { TimeEntryModal } from './src/utils/time-entry-modal';
+import { ScoroMDSettingTab } from './src/settings';
 
 /**
  * Interface defining the plugin's settings structure
@@ -28,6 +29,13 @@ interface ScoroSettings {
   clientsFolder: string; // Folder path for clients (default: Clients)
   projectsFolderName: string; // Name of the projects folder within each client folder (default: Projects)
   tasksFolderName: string; // Name of the tasks folder within each project folder (default: Tasks)
+  developerMode: boolean; // Enable detailed logging for debugging
+  // Sync options
+  syncClients: boolean; // Sync clients from Scoro
+  syncProjects: boolean; // Sync projects from Scoro
+  syncTasks: boolean; // Sync tasks from Scoro
+  syncTimeEntries: boolean; // Sync time entries from Scoro
+  includePersonContacts: boolean; // Include person contacts in client sync (default: false)
 }
 
 /**
@@ -42,7 +50,14 @@ const DEFAULT_SETTINGS: ScoroSettings = {
   dailyNotesFolder: 'Daily',
   clientsFolder: 'Clients',
   projectsFolderName: 'Projects',
-  tasksFolderName: 'Tasks'
+  tasksFolderName: 'Tasks',
+  developerMode: false,
+  // Sync options - all enabled by default
+  syncClients: true,
+  syncProjects: true,
+  syncTasks: true,
+  syncTimeEntries: true,
+  includePersonContacts: false
 };
 
 /**
@@ -76,10 +91,16 @@ export default class ScoroSyncPlugin extends Plugin {
       apiKey: this.settings.apiKey,
       companyId: this.settings.companyId,
       userId: this.settings.userId,
-      mode: 'obsidian' // Use obsidian mode to avoid CORS issues
+      mode: 'obsidian', // Use obsidian mode to avoid CORS issues
+      developerMode: this.settings.developerMode,
+      includePersonContacts: this.settings.includePersonContacts
     });
     this.vaultService = new VaultService(this.app);
-    this.syncService = new SyncService(apiService, this.vaultService);
+    this.syncService = new SyncService(
+      apiService, 
+      this.vaultService,
+      this.settings.developerMode
+    );
 
     // Add ribbon icon for manual sync
     this.addRibbonIcon('refresh-cw', 'Sync All Scoro Data', async () => {
@@ -104,7 +125,7 @@ export default class ScoroSyncPlugin extends Plugin {
     });
 
     // Add settings tab to the Obsidian settings panel
-    this.addSettingTab(new ScoroSettingTab(this.app, this));
+    this.addSettingTab(new ScoroMDSettingTab(this.app, this));
 
     // Register command for syncing all data
     this.addCommand({
@@ -156,7 +177,8 @@ export default class ScoroSyncPlugin extends Plugin {
             apiKey: this.settings.apiKey,
             companyId: this.settings.companyId,
             userId: this.settings.userId,
-            mode: 'obsidian' // Use obsidian mode to avoid CORS issues
+            mode: 'obsidian', // Use obsidian mode to avoid CORS issues
+            includePersonContacts: this.settings.includePersonContacts
           });
           
           // Try to fetch a single client as a test
@@ -260,270 +282,41 @@ export default class ScoroSyncPlugin extends Plugin {
     
     return missingSettings;
   }
-}
-
-/**
- * Settings tab implementation for the plugin
- * This provides the UI for configuring the plugin within Obsidian's settings
- */
-class ScoroSettingTab extends PluginSettingTab {
-  plugin: ScoroSyncPlugin;
-
-  constructor(app: App, plugin: ScoroSyncPlugin) {
-    super(app, plugin);
-    this.plugin = plugin;
-  }
 
   /**
-   * Creates the settings interface
-   * Called each time the settings tab is opened
+   * Reinitialize services when settings change
+   * Used to apply developer mode settings changes
    */
-  display(): void {
-    const {containerEl} = this;
-    containerEl.empty();
-
-    containerEl.createEl('h2', {text: 'ScoroMD Settings'});
-
-    // API Base URL setting
-    new Setting(containerEl)
-      .setName('API Base URL')
-      .setDesc('Your Scoro API base URL (e.g., https://companyname.scoro.com)')
-      .addText(text => text
-        .setPlaceholder('Enter your API base URL')
-        .setValue(this.plugin.settings.apiBase)
-        .onChange(async (value) => {
-          this.plugin.settings.apiBase = value;
-          await this.plugin.saveSettings();
-          this.validateRequiredSettings();
-        }));
-
-    // Company Account ID setting
-    new Setting(containerEl)
-      .setName('Company Account ID')
-      .setDesc('Your Scoro company account ID')
-      .addText(text => text
-        .setPlaceholder('Enter your company ID')
-        .setValue(this.plugin.settings.companyId)
-        .onChange(async (value) => {
-          this.plugin.settings.companyId = value;
-          await this.plugin.saveSettings();
-          this.validateRequiredSettings();
-        }));
-
-    // API Key setting
-    new Setting(containerEl)
-      .setName('API Key')
-      .setDesc('Your Scoro API key')
-      .addText(text => text
-        .setPlaceholder('Enter your API key')
-        .setValue(this.plugin.settings.apiKey)
-        .onChange(async (value) => {
-          this.plugin.settings.apiKey = value;
-          await this.plugin.saveSettings();
-          this.validateRequiredSettings();
-        }));
+  reinitializeServices() {
+    // Initialize services for API communication and vault operations
+    const apiService = new ScoroApiService({
+      apiBase: this.settings.apiBase,
+      apiKey: this.settings.apiKey,
+      companyId: this.settings.companyId,
+      userId: this.settings.userId,
+      mode: 'obsidian', // Use obsidian mode to avoid CORS issues
+      developerMode: this.settings.developerMode,
+      includePersonContacts: this.settings.includePersonContacts
+    });
     
-    // User ID setting
-    new Setting(containerEl)
-      .setName('User ID')
-      .setDesc('Your Scoro user ID for time entries')
-      .addText(text => text
-        .setPlaceholder('Enter your user ID')
-        .setValue(this.plugin.settings.userId)
-        .onChange(async (value) => {
-          this.plugin.settings.userId = value;
-          await this.plugin.saveSettings();
-          this.validateRequiredSettings();
-        }));
-
-    // Daily Notes Folder setting with efficient folder selection
-    new Setting(containerEl)
-      .setName('Daily Notes Folder')
-      .setDesc('Folder path for daily notes (e.g., Daily or Journal/Daily)')
-      .addText(text => {
-        const textInput = text
-          .setPlaceholder('Daily')
-          .setValue(this.plugin.settings.dailyNotesFolder)
-          .onChange(async (value) => {
-            this.plugin.settings.dailyNotesFolder = value || 'Daily';
-            await this.plugin.saveSettings();
-          });
-          
-        // Add button to open folder selector
-        textInput.inputEl.style.width = "180px"; // Make room for button
-        
-        const browseButton = createEl('button', {
-          text: 'Browse',
-          cls: 'mod-cta'
-        });
-        browseButton.style.marginLeft = "10px";
-        
-        browseButton.addEventListener('click', () => {
-          // Create and open folder selector modal
-          new FolderSuggestModal(this.app, (folder) => {
-            textInput.setValue(folder);
-            this.plugin.settings.dailyNotesFolder = folder || 'Daily';
-            this.plugin.saveSettings();
-          }).open();
-        });
-        
-        // Insert button after input element
-        textInput.inputEl.parentElement?.appendChild(browseButton);
-        
-        return textInput;
-      });
-      
-    // Clients Folder setting with efficient folder selection
-    new Setting(containerEl)
-      .setName('Clients Folder')
-      .setDesc('Folder path for clients data (e.g., Clients or Data/Clients)')
-      .addText(text => {
-        const textInput = text
-          .setPlaceholder('Clients')
-          .setValue(this.plugin.settings.clientsFolder)
-          .onChange(async (value) => {
-            this.plugin.settings.clientsFolder = value || 'Clients';
-            await this.plugin.saveSettings();
-          });
-          
-        // Add button to open folder selector
-        textInput.inputEl.style.width = "180px"; // Make room for button
-        
-        const browseButton = createEl('button', {
-          text: 'Browse',
-          cls: 'mod-cta'
-        });
-        browseButton.style.marginLeft = "10px";
-        
-        browseButton.addEventListener('click', () => {
-          // Create and open folder selector modal
-          new FolderSuggestModal(this.app, (folder) => {
-            textInput.setValue(folder);
-            this.plugin.settings.clientsFolder = folder || 'Clients';
-            this.plugin.saveSettings();
-          }).open();
-        });
-        
-        // Insert button after input element
-        textInput.inputEl.parentElement?.appendChild(browseButton);
-        
-        return textInput;
-      });
+    this.vaultService = new VaultService(this.app);
+    this.syncService = new SyncService(
+      apiService, 
+      this.vaultService,
+      this.settings.developerMode
+    );
     
-    // Projects Folder Name setting
-    new Setting(containerEl)
-      .setName('Projects Folder Name')
-      .setDesc('Name of the projects folder within each client folder')
-      .addText(text => text
-        .setPlaceholder('Projects')
-        .setValue(this.plugin.settings.projectsFolderName)
-        .onChange(async (value) => {
-          this.plugin.settings.projectsFolderName = value || 'Projects';
-          await this.plugin.saveSettings();
-        }));
-    
-    // Tasks Folder Name setting
-    new Setting(containerEl)
-      .setName('Tasks Folder Name')
-      .setDesc('Name of the tasks folder within each project folder')
-      .addText(text => text
-        .setPlaceholder('Tasks')
-        .setValue(this.plugin.settings.tasksFolderName)
-        .onChange(async (value) => {
-          this.plugin.settings.tasksFolderName = value || 'Tasks';
-          await this.plugin.saveSettings();
-        }));
-
-    // Sync Interval setting
-    new Setting(containerEl)
-      .setName('Sync Interval (hours)')
-      .setDesc('How often to sync with Scoro (0 for manual only)')
-      .addText(text => text
-        .setPlaceholder('24')
-        .setValue(String(this.plugin.settings.syncIntervalHours))
-        .onChange(async (value) => {
-          const hours = parseInt(value) || 0;
-          this.plugin.settings.syncIntervalHours = hours;
-          await this.plugin.saveSettings();
-          
-          if (hours > 0) {
-            this.plugin.startSyncInterval();
-          } else if (this.plugin.syncInterval) {
-            window.clearInterval(this.plugin.syncInterval);
-          }
-        }));
-    
-    // Validate settings on initial load
-    this.validateRequiredSettings();
+    console.log(`ScoroMD: Services reinitialized. Developer mode: ${this.settings.developerMode ? 'enabled' : 'disabled'}`);
   }
   
   /**
-   * Validates required settings and shows a warning if any are missing
-   * This is called when the settings tab is opened and when settings change
+   * Restart the auto sync timer when settings change
    */
-  validateRequiredSettings(): void {
-    const { apiBase, apiKey, companyId, userId } = this.plugin.settings;
-    
-    const missingSettings: string[] = [];
-    
-    if (!apiBase) missingSettings.push('API Base URL');
-    if (!apiKey) missingSettings.push('API Key');
-    if (!companyId) missingSettings.push('Company Account ID');
-    if (!userId) missingSettings.push('User ID');
-    
-    if (missingSettings.length > 0) {
-      const missingList = missingSettings.join(', ');
-      NotificationService.showWarning(`Required settings missing: ${missingList}`);
+  restartAutoSync() {
+    if (this.syncInterval) {
+      window.clearInterval(this.syncInterval);
     }
-  }
-}
-
-/**
- * Modal for selecting a folder using Obsidian's built-in fuzzy matching
- */
-class FolderSuggestModal extends FuzzySuggestModal<string> {
-  private onSelect: (folder: string) => void;
-  private folderPaths: string[] = [];
-
-  constructor(app: App, onSelect: (folder: string) => void) {
-    super(app);
-    this.onSelect = onSelect;
-    this.setPlaceholder("Select folder for daily notes");
-    this.collectFolders();
-  }
-
-  private collectFolders(): void {
-    // Root folder
-    this.folderPaths.push('/');
     
-    // Get all folders in the vault
-    const collectFolderPaths = (folder: TFolder, path = '') => {
-      const folderPath = path ? `${path}/${folder.name}` : folder.name;
-      this.folderPaths.push(folderPath);
-      
-      folder.children
-        .filter(child => child instanceof TFolder)
-        .forEach(subFolder => collectFolderPaths(subFolder as TFolder, folderPath));
-    };
-    
-    // Get root folders
-    this.app.vault.getAllLoadedFiles()
-      .filter(file => file instanceof TFolder && file.parent === null)
-      .forEach(rootFolder => collectFolderPaths(rootFolder as TFolder));
-    
-    // Sort folder paths
-    this.folderPaths.sort();
-  }
-
-  getItems(): string[] {
-    return this.folderPaths;
-  }
-
-  getItemText(folderPath: string): string {
-    return folderPath === '/' ? 'Root' : folderPath;
-  }
-
-  onChooseItem(folderPath: string, evt: MouseEvent | KeyboardEvent): void {
-    this.onSelect(folderPath === '/' ? '' : folderPath);
+    this.startSyncInterval();
   }
 } 
