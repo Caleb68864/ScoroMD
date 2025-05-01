@@ -214,6 +214,10 @@ export class VaultService {
     return value
       // Replace characters that are definitely not allowed in paths
       .replace(/[*"<>:|?]/g, '')
+      // Replace comma followed by space with just a space
+      .replace(/,\s+/g, ' ')
+      // Replace any remaining commas with nothing
+      .replace(/,/g, '')
       // Normalize multiple spaces to single space
       .replace(/\s+/g, ' ')
       // Preserve underscores
@@ -903,7 +907,9 @@ export class VaultService {
   
   getTaskPath(clientName: string, projectName: string, taskName: string): string {
     const tasksPath = this.getTasksFolderPath(clientName, projectName);
-    const sanitizedTask = this.sanitizeScoro(taskName);
+    // Replace slashes with spaces in task name before sanitizing
+    const taskNameWithoutSlashes = taskName.replace(/\//g, ' ');
+    const sanitizedTask = this.sanitizeScoro(taskNameWithoutSlashes);
     return `${tasksPath}/${sanitizedTask}.md`;
   }
 
@@ -913,8 +919,10 @@ export class VaultService {
 
   getUnassignedTaskPath(taskName: string): string {
     const unassignedPath = this.getUnassignedTasksFolder();
+    // Replace slashes with spaces in task name before sanitizing
+    const taskNameWithoutSlashes = taskName.replace(/\//g, ' ');
     // First sanitize the task name without preserving slashes to convert them to dashes
-    const sanitizedTask = this.sanitizePath(taskName, { preserveSlashes: false });
+    const sanitizedTask = this.sanitizePath(taskNameWithoutSlashes, { preserveSlashes: false });
     // Then construct and sanitize the full path with preserveSlashes
     return this.sanitizePath(`${unassignedPath}/${sanitizedTask}.md`, { preserveSlashes: true });
   }

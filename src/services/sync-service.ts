@@ -150,9 +150,25 @@ export class SyncService {
     try {
       // Get projects from API
       const response = await this.api.getProjects();
+      this.log('Projects API response', { 
+        status: response.status,
+        itemCount: response.items?.length || 0,
+        items: response.items
+      });
       
       // Process each project
-      for (const project of response.items || []) {
+      if (!response.items || response.items.length === 0) {
+        this.log('No projects found in API response');
+        NotificationService.showWarning('No projects found in Scoro');
+        return;
+      }
+
+      for (const project of response.items) {
+        this.log('Processing project', { 
+          id: project.project_id,
+          name: project.project_name,
+          company: project.company_name
+        });
         await this.processProject(project);
       }
     } catch (error) {
@@ -419,6 +435,21 @@ export class SyncService {
     const companyName = project.company_name || 'Unnamed Company';
     const projectName = project.project_name || 'Unnamed Project';
 
+    // Ensure project structure exists
+    const clientFolder = this.vault.getClientFolderPath(companyName);
+    const projectFolder = this.vault.getProjectFolderPath(companyName, projectName);
+    const tasksFolder = this.vault.getTasksFolderPath(companyName, projectName);
+
+    try {
+      // Create folder structure if it doesn't exist
+      await this.vault.ensureFolder(clientFolder);
+      await this.vault.ensureFolder(projectFolder);
+      await this.vault.ensureFolder(tasksFolder);
+    } catch (error) {
+      this.log('Failed to create folder structure', { error });
+      throw error;
+    }
+
     // Process each task
     for (const task of tasks) {
       // Try to find existing task note by task_id
@@ -553,13 +584,13 @@ SORT deadline ASC
   private createProjectNote(project: ScoroProject): string {
     this.log('Creating project note for', project);
     // Sanitize project name for path construction
-    const sanitizedProjectName = project.project_name || project.name || '';
+    const sanitizedProjectName = project.project_name;
     return `---
 type: scoro_project
 project_id: ${project.project_id || ''}
 project_name: ${sanitizedProjectName}
-status: ${project.status || ''}
-deadline: ${project.deadline || ''}
+status: ${project.status_name || ''}
+deadline: ${project.deadline_date || ''}
 manager_id: ${project.manager_id || ''}
 last_synced: ${new Date().toISOString()}
 ---

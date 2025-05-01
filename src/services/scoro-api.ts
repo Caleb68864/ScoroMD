@@ -206,7 +206,7 @@ export class ScoroApiService {
 
       this.log('API request completed successfully', { path });
       return data.data;
-    } catch (error) {
+    } catch (error: any) {
       this.log('Error in API request', {
         path: path,
         error: error
@@ -304,14 +304,45 @@ export class ScoroApiService {
    * @returns Promise resolving to an array of ScoroProject objects
    */
   async getProjects() {
-    const response = await this.post<ScoroListResponse<ScoroProject>>('projects/list');
+    const response = await this.post<ScoroListResponse<ScoroProject>>('projects/list', {
+      request: {},
+      detailed_response: 1
+    });
     
-    // Ensure response has items array
-    if (!response.items) {
-      response.items = [];
+    // Use any type for flexible property access 
+    let anyResponse = response as any;
+    
+    if (this.developerMode) {
+      console.log(`[ScoroMD Debug] Raw API response for projects:`, anyResponse);
     }
     
-    return response;
+    // The response structure might be different than expected
+    // If we have 'data' array but no 'items', map data to items
+    if (!anyResponse.items && anyResponse.data && Array.isArray(anyResponse.data)) {
+      if (this.developerMode) {
+        console.log(`[ScoroMD Debug] Converting data array to items for projects`, anyResponse.data.length);
+      }
+      anyResponse.items = anyResponse.data;
+    }
+    
+    // Handle case where response is directly an array
+    if (!anyResponse.items && Array.isArray(anyResponse)) {
+      if (this.developerMode) {
+        console.log(`[ScoroMD Debug] Response is directly an array, converting to items`, anyResponse.length);
+      }
+      const tempResponse = { items: anyResponse };
+      anyResponse = tempResponse;
+    }
+    
+    // Ensure response has items array
+    if (!anyResponse.items) {
+      if (this.developerMode) {
+        console.log(`[ScoroMD Debug] No items found in response, creating empty array`);
+      }
+      anyResponse.items = [];
+    }
+    
+    return anyResponse as ScoroListResponse<ScoroProject>;
   }
 
   /**
@@ -332,13 +363,49 @@ export class ScoroApiService {
    * @returns Promise<ScoroListResponse<ScoroTask>>
    */
   async getTasks(options?: { page?: number; per_page?: number }): Promise<ScoroListResponse<ScoroTask>> {
-    return this.post<ScoroListResponse<ScoroTask>>('tasks/list', {
+    const response = await this.post<ScoroListResponse<ScoroTask>>('tasks/list', {
       request: {},
+      detailed_response: 1,
       ...(options && {
         page: options.page,
         per_page: options.per_page
       })
     });
+
+    // Use any type for flexible property access 
+    let anyResponse = response as any;
+    
+    if (this.developerMode) {
+      console.log(`[ScoroMD Debug] Raw API response for tasks:`, anyResponse);
+    }
+    
+    // The response structure might be different than expected
+    // If we have 'data' array but no 'items', map data to items
+    if (!anyResponse.items && anyResponse.data && Array.isArray(anyResponse.data)) {
+      if (this.developerMode) {
+        console.log(`[ScoroMD Debug] Converting data array to items for tasks`, anyResponse.data.length);
+      }
+      anyResponse.items = anyResponse.data;
+    }
+    
+    // Handle case where response is directly an array
+    if (!anyResponse.items && Array.isArray(anyResponse)) {
+      if (this.developerMode) {
+        console.log(`[ScoroMD Debug] Response is directly an array, converting to items`, anyResponse.length);
+      }
+      const tempResponse = { items: anyResponse };
+      anyResponse = tempResponse;
+    }
+    
+    // Ensure response has items array
+    if (!anyResponse.items) {
+      if (this.developerMode) {
+        console.log(`[ScoroMD Debug] No items found in response, creating empty array`);
+      }
+      anyResponse.items = [];
+    }
+    
+    return anyResponse as ScoroListResponse<ScoroTask>;
   }
 
   /**
