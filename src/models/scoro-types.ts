@@ -36,7 +36,7 @@ export interface ScoroAddress {
 
 export interface ScoroProject {
   project_id: string;
-  name: string;
+  project_name: string;
   description?: string;
   company_id?: string;
   company_name?: string;
