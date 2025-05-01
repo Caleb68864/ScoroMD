@@ -47,20 +47,30 @@ export class NotificationService {
     );
   }
 
-  static showError(message: string, error?: Error) {
-    this.show({ level: NotificationLevel.ERROR, message, error });
+  static showError(message: string, error?: unknown) {
+    let errorMessage = message;
+    if (error) {
+      if (error instanceof Error) {
+        errorMessage += `: ${error.message}`;
+      } else if (typeof error === 'string') {
+        errorMessage += `: ${error}`;
+      } else if (error && typeof error === 'object' && 'message' in error) {
+        errorMessage += `: ${error.message}`;
+      }
+    }
+    new Notice(errorMessage);
   }
 
-  static showWarning(message: string, error?: Error) {
-    this.show({ level: NotificationLevel.WARNING, message, error });
+  static showWarning(message: string) {
+    new Notice(message);
   }
 
   static showSuccess(message: string) {
-    this.show({ level: NotificationLevel.SUCCESS, message });
+    new Notice(message);
   }
 
   static showInfo(message: string) {
-    this.show({ level: NotificationLevel.INFO, message });
+    new Notice(message);
   }
 }
 

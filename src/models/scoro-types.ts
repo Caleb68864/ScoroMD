@@ -6,8 +6,14 @@ export interface ScoroResponse<T> {
 }
 
 export interface ScoroListResponse<T> {
+  status: string;
+  statusCode: number;
+  messages: any;
   items?: T[];
-  total_items?: number;
+  has_more?: boolean;  // Pagination flag
+  page?: number;       // Current page
+  per_page?: number;   // Items per page
+  total?: number;      // Total number of items
 }
 
 export interface ScoroClient {

@@ -6,8 +6,9 @@ import {
   ScoroProject,
   ScoroTask,
   ScoroTimeEntry,
-  DailyNoteTimeEntry
-} from '../models/scoro-types';
+  DailyNoteTimeEntry,
+  ScoroListResponse
+} from '../types/scoro';
 
 export class SyncService {
   private developerMode: boolean;
@@ -123,115 +124,18 @@ export class SyncService {
     };
   }
 
-  async syncClients() {
+  /**
+   * Syncs clients from Scoro to Obsidian
+   */
+  private async syncClients() {
     try {
-      this.log('Getting clients from API');
+      // Get clients from API
       const response = await this.api.getClients();
-      this.log('API response for clients', response);
       
-      const clientsFolder = this.vault.getClientsFolder();
-      this.log('Ensuring clients folder exists', clientsFolder);
-      
-      try {
-        await this.vault.ensureFolder(clientsFolder);
-        this.log('Successfully created/verified clients folder', clientsFolder);
-      } catch (folderError) {
-        this.log('Error creating clients folder', { folder: clientsFolder, error: folderError });
-        throw folderError;
+      // Process each client
+      for (const client of response.items || []) {
+        await this.processClient(client);
       }
-
-      if (!response.items || response.items.length === 0) {
-        this.log('No clients found in API response', response);
-        NotificationService.showWarning('No clients found in Scoro');
-        return;
-      }
-
-      // Log the first client to debug the structure
-      if (response.items.length > 0) {
-        this.log('First client example:', response.items[0]);
-      }
-
-      // Modified validation logic to handle clients with 'name' field
-      // Cast to any to access potentially undefined properties more safely
-      const validClients = response.items.map(client => {
-        const anyClient = client as any;
-        // Add name property to standard fields for validation
-        return {
-          ...anyClient,
-          // Ensure these fields exist for compatibility
-          company_name: anyClient.company_name || anyClient.name || "",
-          contact_name: anyClient.contact_name || anyClient.name || "",
-          company_id: anyClient.company_id || anyClient.contact_id || "",
-          contact_id: anyClient.contact_id || anyClient.company_id || ""
-        };
-      }).filter(client => client.company_name || client.contact_name || client.name);
-      
-      // Log count of clients with missing names for debugging
-      const invalidClients = response.items.filter(client => {
-        const anyClient = client as any;
-        return !anyClient.company_name && !anyClient.contact_name && !anyClient.name;
-      });
-      
-      this.log(`Found ${validClients.length} valid clients, ${invalidClients.length} invalid clients`);
-      
-      if (invalidClients.length > 0) {
-        this.log('Clients with missing names', invalidClients);
-      }
-
-      this.log(`Processing ${validClients.length} clients`);
-      for (const client of validClients) {
-        // Client data has already been normalized in our map function above
-        const clientName = client.company_name || client.contact_name || client.name;
-        const clientId = client.company_id || client.contact_id;
-        
-        this.log('Processing client', { id: clientId, name: clientName });
-        
-        // Skip clients without a valid name
-        if (!clientName) {
-          this.log('Skipping client with missing name', client);
-          continue;
-        }
-        
-        const clientFolder = this.vault.getClientFolderPath(clientName);
-        this.log('Ensuring client folder exists', clientFolder);
-        
-        try {
-          await this.vault.ensureFolder(clientFolder);
-          this.log('Successfully created/verified client folder', clientFolder);
-        } catch (folderError) {
-          this.log('Error creating client folder', { folder: clientFolder, error: folderError });
-          continue;
-        }
-        
-        // Create the projects folder within the client folder
-        const projectsFolderPath = `${clientFolder}/${this.vault.getProjectsFolderName()}`;
-        this.log('Ensuring projects folder exists', projectsFolderPath);
-        
-        try {
-          await this.vault.ensureFolder(projectsFolderPath);
-          this.log('Successfully created/verified projects folder', projectsFolderPath);
-        } catch (folderError) {
-          this.log('Error creating projects folder', { folder: projectsFolderPath, error: folderError });
-          continue;
-        }
-
-        this.log('Creating client note');
-        
-        try {
-          const clientNote = this.createClientNote(client);
-          // Use the vault service's sanitized client folder path to get the proper path
-          const sanitizedClientName = clientFolder.split('/').pop();
-          const clientNotePath = `${clientFolder}/${sanitizedClientName}.md`;
-          this.log('Saving client note', { path: clientNotePath });
-          await this.vault.createOrUpdateNote(clientNotePath, clientNote);
-          this.log('Successfully created/updated client note', clientNotePath);
-        } catch (noteError) {
-          this.log('Error creating client note', { client: clientName, error: noteError });
-          continue;
-        }
-      }
-      this.log('All clients processed successfully');
-      NotificationService.showSuccess('Clients synced');
     } catch (error) {
       this.log('Failed to sync clients', error);
       NotificationService.showError('Failed to sync clients', error);
@@ -239,103 +143,18 @@ export class SyncService {
     }
   }
 
-  async syncProjects() {
+  /**
+   * Syncs projects from Scoro to Obsidian
+   */
+  private async syncProjects() {
     try {
-      this.log('Getting projects from API');
+      // Get projects from API
       const response = await this.api.getProjects();
-      this.log('API response for projects', response);
       
-      // Check if we have projects data in the response
-      // Projects could be in response.items or directly in the response array
-      const projects = response.items && response.items.length > 0 
-        ? response.items 
-        : (Array.isArray(response) ? response : []);
-      
-      if (projects.length === 0) {
-        this.log('No projects found in API response', response);
-        NotificationService.showWarning('No projects found in Scoro');
-        return;
+      // Process each project
+      for (const project of response.items || []) {
+        await this.processProject(project);
       }
-      
-      // Get company information to match company_id to company_name
-      const clientResponse = await this.api.getClients();
-      const clients = clientResponse.items || [];
-      const clientsMap = new Map();
-      for (const client of clients) {
-        // Store both company_id and contact_id in our map for lookup
-        if (client.company_id) {
-          // Type cast to access potentially missing properties
-          const anyClient = client as any;
-          clientsMap.set(client.company_id, anyClient.company_name || anyClient.name);
-        }
-        if (client.contact_id) {
-          // Type cast to access potentially missing properties
-          const anyClient = client as any;
-          clientsMap.set(client.contact_id, anyClient.contact_name || anyClient.name);
-        }
-      }
-      this.log('Created clients map for company name lookup', { mapSize: clientsMap.size });
-
-      this.log(`Processing ${projects.length} projects`);
-      for (const project of projects) {
-        this.log('Processing project', project);
-        
-        // Get company name from project directly or lookup by ID
-        let companyName = project.company_name;
-        if (!companyName && project.company_id) {
-          companyName = clientsMap.get(project.company_id);
-          this.log('Looked up company name from ID', { id: project.company_id, name: companyName });
-        }
-        
-        const rawProjectName = project.project_name || project.name || '';
-        // Sanitize project name by combining all segments
-        const projectName = rawProjectName.split(/[/\\]/).join(' ');
-        
-        // Skip projects with missing required properties
-        if (!companyName || !projectName) {
-          this.log('Skipping project with missing required properties', project);
-          console.warn('Skipping project with missing required properties', project);
-          continue;
-        }
-        
-        // Check if client folder exists
-        const clientFolder = this.vault.getClientFolderPath(companyName);
-        const clientFolderExists = await this.vault.folderExists(clientFolder);
-        
-        if (!clientFolderExists) {
-          this.log('Client folder does not exist, skipping project', { client: companyName, project: projectName });
-          NotificationService.showWarning(`Client folder for "${companyName}" not found. Please sync clients first.`);
-          continue;
-        }
-        
-        // Then create the project folder using the sanitized project name
-        const projectFolder = this.vault.getProjectFolderPath(
-          companyName, 
-          projectName
-        );
-        
-        this.log('Ensuring project folder exists', projectFolder);
-        await this.vault.ensureFolder(projectFolder);
-        
-        // Create the tasks folder within the project folder using the sanitized project name
-        const tasksFolderPath = this.vault.getTasksFolderPath(
-          companyName, 
-          projectName
-        );
-        this.log('Ensuring tasks folder exists', tasksFolderPath);
-        await this.vault.ensureFolder(tasksFolderPath);
-
-        this.log('Creating project note');
-        const projectNote = this.createProjectNote({
-          ...project,
-          project_name: projectName // Use sanitized project name
-        });
-        const projectNotePath = `${projectFolder}/${projectName}.md`;
-        this.log('Saving project note', { path: projectNotePath, content: projectNote });
-        await this.vault.createOrUpdateNote(projectNotePath, projectNote);
-      }
-      this.log('All projects processed successfully');
-      NotificationService.showSuccess('Projects synced');
     } catch (error) {
       this.log('Failed to sync projects', error);
       NotificationService.showError('Failed to sync projects', error);
@@ -343,60 +162,74 @@ export class SyncService {
     }
   }
 
-  async syncTasks() {
+  /**
+   * Syncs tasks from Scoro to Obsidian
+   */
+  private async syncTasks() {
     try {
-      this.log('Getting tasks from API');
-      const response = await this.api.getTasks();
-      this.log('API response for tasks', response);
+      // Create data structures to organize tasks
+      const tasksByProject = new Map<string, any[]>();
+      const unassignedTasks: any[] = [];
+      let allTasksProcessed = false;
+      let page = 1;
+      let totalTasks = 0;
+
+      // Step 1: Get all tasks from Scoro API with pagination
+      while (!allTasksProcessed) {
+        this.log('Getting tasks from API', { page });
+        const response = await this.api.getTasks({
+          page: page,
+          per_page: 100 // Standard page size
+        });
+        this.log('API response for tasks', { 
+          page,
+          itemCount: response.items?.length || 0,
+          hasMore: response.has_more
+        });
+        
+        // Check if we have tasks in this page
+        if (!response.items || response.items.length === 0) {
+          this.log('No tasks found in API response', response);
+          if (page === 1) {
+            NotificationService.showWarning('No tasks found in Scoro');
+            return;
+          }
+          break;
+        }
+        
+        // Process tasks in this page
+        for (const task of response.items) {
+          if (task.project_id) {
+            // Add task to project's task list
+            const projectTasks = tasksByProject.get(task.project_id) || [];
+            projectTasks.push(task);
+            tasksByProject.set(task.project_id, projectTasks);
+          } else {
+            // Add to unassigned tasks
+            unassignedTasks.push(task);
+          }
+          totalTasks++;
+        }
+        
+        // Check if we have more pages
+        if (!response.has_more) {
+          allTasksProcessed = true;
+        } else {
+          page++;
+        }
+      }
+
+      // Step 2: Process tasks by project
+      for (const [projectId, tasks] of tasksByProject) {
+        await this.processProjectTasks(projectId, tasks);
+      }
       
-      if (!response.items || response.items.length === 0) {
-        this.log('No tasks found in API response', response);
-        NotificationService.showWarning('No tasks found in Scoro');
-        return;
+      // Step 3: Process unassigned tasks
+      if (unassignedTasks.length > 0) {
+        await this.processUnassignedTasks(unassignedTasks);
       }
-
-      this.log(`Processing ${response.items.length} tasks`);
-      for (const task of response.items) {
-        this.log('Processing task', task);
-        
-        if (!task.project_id) {
-          this.log('Skipping task with no project ID', task);
-          continue;
-        }
-
-        this.log(`Getting project info for project ID: ${task.project_id}`);
-        const projectInfo = await this.api.getProject(task.project_id);
-        this.log('Project info received', projectInfo);
-        
-        if (!projectInfo) {
-          this.log('Could not find project info for task', { task, projectId: task.project_id });
-          continue;
-        }
-        
-        // Safe access to properties with possible undefined values
-        const companyName = projectInfo.company_name || '';
-        const projectName = projectInfo.name || '';
-        
-        // Skip tasks with missing required properties
-        if (!companyName || !projectName || !task.event_name) {
-          this.log('Skipping task with missing required properties', { task, projectInfo });
-          console.warn('Skipping task with missing required properties', task);
-          continue;
-        }
-        
-        const taskPath = this.vault.getTaskPath(
-          companyName,
-          projectName,
-          task.event_name
-        );
-        this.log('Creating task note', { path: taskPath });
-        const taskNote = this.createTaskNote(task);
-        
-        this.log('Saving task note', { path: taskPath, content: taskNote });
-        await this.vault.createOrUpdateNote(taskPath, taskNote);
-      }
-      this.log('All tasks processed successfully');
-      NotificationService.showSuccess('Tasks synced');
+      
+      this.log(`Processed ${totalTasks} tasks`);
     } catch (error) {
       this.log('Failed to sync tasks', error);
       NotificationService.showError('Failed to sync tasks', error);
@@ -404,214 +237,18 @@ export class SyncService {
     }
   }
 
-  async syncTimeEntries() {
+  /**
+   * Syncs time entries from Scoro to Obsidian
+   */
+  private async syncTimeEntries() {
     try {
-      // Get time entries from Scoro for the last 30 days
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      // Get time entries from API
+      const response = await this.api.getTimeEntries();
       
-      this.log('Getting time entries from API', { fromDate: thirtyDaysAgo.toISOString(), toDate: new Date().toISOString() });
-      const scoroEntries = await this.api.getTimeEntries({
-        from_date: thirtyDaysAgo.toISOString(),
-        to_date: new Date().toISOString()
-      });
-      this.log('API response for time entries', scoroEntries);
-
-      // Check if response has expected structure with items
-      if (!scoroEntries.items || !Array.isArray(scoroEntries.items)) {
-        this.log('Invalid API response format for time entries', scoroEntries);
-        NotificationService.showError('Invalid API response format for time entries', 
-          new ScoroSyncError('Invalid API response format', 'time entries', scoroEntries)
-        );
-        throw new ScoroSyncError('Invalid API response format: Expected items array', 'time entries', scoroEntries);
+      // Process each time entry
+      for (const entry of response.items || []) {
+        await this.processTimeEntry(entry);
       }
-
-      // Get time entries from daily notes
-      this.log('Getting time entries from daily notes', { fromDate: thirtyDaysAgo, toDate: new Date() });
-      const dailyNoteEntries = await this.vault.parseTimeEntriesFromDailyNotes(
-        thirtyDaysAgo,
-        new Date()
-      );
-      this.log('Daily note entries found', dailyNoteEntries);
-
-      // Create maps for easier lookup
-      const scoroEntriesMap = new Map<string, ScoroTimeEntry>();
-      const dailyNoteEntriesMap = new Map<string, DailyNoteTimeEntry>();
-
-      for (const entry of scoroEntries.items) {
-        scoroEntriesMap.set(entry.time_entry_id, entry);
-      }
-
-      for (const entry of dailyNoteEntries) {
-        if (entry.time_entry_id) {
-          dailyNoteEntriesMap.set(entry.time_entry_id, entry);
-        }
-      }
-
-      this.log('Entry maps created', { 
-        scoroEntries: scoroEntriesMap.size, 
-        dailyNoteEntries: dailyNoteEntriesMap.size 
-      });
-
-      // Process entries from daily notes
-      this.log(`Processing ${dailyNoteEntries.length} entries from daily notes`);
-      for (const entry of dailyNoteEntries) {
-        this.log('Processing daily note entry', entry);
-        
-        try {
-          if (!entry.task_id) {
-            this.log('No task ID found for entry', entry);
-            NotificationService.showWarning(
-              `No task ID found for entry: ${entry.task_name}. Please link the task first.`
-            );
-            continue;
-          }
-
-          if (!entry.time_entry_id) {
-            this.log('Creating new entry in Scoro', entry);
-            // Create new entry in Scoro
-            const result = await this.api.createTimeEntry({
-              event_id: entry.task_id,
-              datetime_start: entry.datetime_start,
-              datetime_end: entry.datetime_end,
-              description: entry.description
-            });
-            this.log('New entry created in Scoro', result);
-
-            // Update note with time entry ID
-            this.log('Updating note with time entry ID', { entryId: result.time_entry_id, path: entry.file_path });
-            const updatedContent = await this.addTimeEntryIdToNote(entry, result.time_entry_id);
-            if (updatedContent) {
-              await this.vault.createOrUpdateNote(entry.file_path, updatedContent);
-              this.log('Note updated with time entry ID', { path: entry.file_path });
-              NotificationService.showSuccess(`Created time entry for: ${entry.task_name}`);
-            } else {
-              this.log('Failed to update note with time entry ID', { path: entry.file_path });
-            }
-          } else {
-            // Check if entry exists in Scoro
-            const scoroEntry = scoroEntriesMap.get(entry.time_entry_id);
-            if (!scoroEntry) {
-              this.log('Entry was deleted in Scoro, recreating', entry);
-              // Entry was deleted in Scoro, recreate it
-              const result = await this.api.createTimeEntry({
-                event_id: entry.task_id,
-                datetime_start: entry.datetime_start,
-                datetime_end: entry.datetime_end,
-                description: entry.description
-              });
-              this.log('Entry recreated in Scoro', result);
-
-              // Update note with new time entry ID
-              this.log('Updating note with new time entry ID', { entryId: result.time_entry_id, path: entry.file_path });
-              const updatedContent = await this.addTimeEntryIdToNote(entry, result.time_entry_id);
-              if (updatedContent) {
-                await this.vault.createOrUpdateNote(entry.file_path, updatedContent);
-                this.log('Note updated with new time entry ID', { path: entry.file_path });
-                NotificationService.showSuccess(`Recreated deleted time entry for: ${entry.task_name}`);
-              } else {
-                this.log('Failed to update note with new time entry ID', { path: entry.file_path });
-              }
-            } else {
-              // Check if entry needs updating
-              const needsUpdate = 
-                entry.datetime_start !== scoroEntry.datetime_start ||
-                entry.datetime_end !== scoroEntry.datetime_end ||
-                entry.description !== scoroEntry.description;
-
-              if (needsUpdate) {
-                this.log('Updating entry in Scoro', { 
-                  entryId: entry.time_entry_id, 
-                  changes: {
-                    datetime_start: entry.datetime_start,
-                    datetime_end: entry.datetime_end,
-                    description: entry.description
-                  }
-                });
-                await this.api.updateTimeEntry(entry.time_entry_id, {
-                  datetime_start: entry.datetime_start,
-                  datetime_end: entry.datetime_end,
-                  description: entry.description
-                });
-                this.log('Entry updated in Scoro', { entryId: entry.time_entry_id });
-                NotificationService.showSuccess(`Updated time entry for: ${entry.task_name}`);
-              } else {
-                this.log('Entry is already up to date, no changes needed', { entryId: entry.time_entry_id });
-              }
-            }
-          }
-        } catch (error) {
-          this.log('Error processing daily note entry', { entry, error });
-          if (error instanceof ScoroValidationError) {
-            NotificationService.showWarning(
-              `Invalid time entry data for: ${entry.task_name}`,
-              error
-            );
-          } else {
-            NotificationService.showError(
-              `Failed to sync time entry: ${entry.task_name}`,
-              error
-            );
-          }
-        }
-      }
-
-      // Process entries from Scoro that don't exist in daily notes
-      this.log(`Processing ${scoroEntriesMap.size} entries from Scoro`);
-      for (const [timeEntryId, scoroEntry] of scoroEntriesMap) {
-        this.log('Checking if Scoro entry exists in daily notes', { timeEntryId });
-        if (!dailyNoteEntriesMap.has(timeEntryId)) {
-          this.log('Scoro entry not found in daily notes, adding to notes', { timeEntryId, entry: scoroEntry });
-          try {
-            // Get task details
-            this.log('Getting task details', { eventId: scoroEntry.event_id });
-            const task = await this.api.getTask(scoroEntry.event_id);
-            if (!task) {
-              this.log('Could not find task for Scoro time entry', { timeEntryId, eventId: scoroEntry.event_id });
-              NotificationService.showWarning(
-                `Could not find task for Scoro time entry: ${timeEntryId}`
-              );
-              continue;
-            }
-            this.log('Task details retrieved', task);
-
-            // Create entry in daily note
-            const date = new Date(scoroEntry.datetime_start);
-            const dailyNotePath = this.vault.getDailyNotePath(date);
-            this.log('Creating time entry content for daily note', { 
-              date, 
-              path: dailyNotePath,
-              taskName: task.event_name
-            });
-            const timeEntryContent = this.createTimeEntryContent(
-              task.event_name,
-              scoroEntry.datetime_start,
-              scoroEntry.datetime_end,
-              scoroEntry.description,
-              task.task_id,
-              timeEntryId
-            );
-
-            this.log('Appending time entry to daily note', { path: dailyNotePath, content: timeEntryContent });
-            await this.vault.appendToDailyNote(dailyNotePath, timeEntryContent);
-            this.log('Time entry appended to daily note', { path: dailyNotePath });
-            NotificationService.showSuccess(
-              `Added Scoro time entry to daily note: ${task.event_name}`
-            );
-          } catch (error) {
-            this.log('Failed to sync time entry from Scoro', { timeEntryId, error });
-            NotificationService.showError(
-              `Failed to sync time entry: ${scoroEntry.event_id}`,
-              error
-            );
-          }
-        } else {
-          this.log('Scoro entry already exists in daily notes, skipping', { timeEntryId });
-        }
-      }
-      
-      this.log('All time entries processed successfully');
-      NotificationService.showSuccess('Time entries synced');
     } catch (error) {
       this.log('Failed to sync time entries', error);
       NotificationService.showError('Failed to sync time entries', error);
@@ -619,8 +256,257 @@ export class SyncService {
     }
   }
 
+  /**
+   * Process a single client from Scoro
+   */
+  private async processClient(client: ScoroClient) {
+    const clientName = client.company_name || client.contact_name || (client as any).name;
+    const clientId = client.company_id || client.contact_id;
+    
+    this.log('Processing client', { id: clientId, name: clientName });
+    
+    // Skip clients without a valid name
+    if (!clientName) {
+      this.log('Skipping client with missing name', client);
+      return;
+    }
+
+    // Try to find existing client note by client_id
+    const existingClientNotes = await this.vault.findNotesByFrontmatter({
+      type: 'scoro_client',
+      client_id: clientId
+    });
+
+    if (existingClientNotes.length > 0) {
+      // Update existing note
+      const clientNote = this.createClientNote(client);
+      await this.vault.createOrUpdateNote(existingClientNotes[0], clientNote);
+      this.log('Updated existing client note', existingClientNotes[0]);
+      return;
+    }
+    
+    // No existing note found, create new one
+    const clientFolder = this.vault.getClientFolderPath(clientName);
+    this.log('Ensuring client folder exists', clientFolder);
+    
+    try {
+      await this.vault.ensureFolder(clientFolder);
+      this.log('Successfully created/verified client folder', clientFolder);
+    } catch (folderError) {
+      this.log('Error creating client folder', { folder: clientFolder, error: folderError });
+      return;
+    }
+    
+    // Create the projects folder within the client folder
+    const projectsFolderPath = `${clientFolder}/${this.vault.getProjectsFolderName()}`;
+    this.log('Ensuring projects folder exists', projectsFolderPath);
+    
+    try {
+      await this.vault.ensureFolder(projectsFolderPath);
+      this.log('Successfully created/verified projects folder', projectsFolderPath);
+    } catch (folderError) {
+      this.log('Error creating projects folder', { folder: projectsFolderPath, error: folderError });
+      return;
+    }
+
+    this.log('Creating client note');
+    
+    try {
+      const clientNote = this.createClientNote(client);
+      // Use the vault service's sanitized client folder path to get the proper path
+      const sanitizedClientName = clientFolder.split('/').pop();
+      const clientNotePath = `${clientFolder}/${sanitizedClientName}.md`;
+      this.log('Saving client note', { path: clientNotePath });
+      await this.vault.createOrUpdateNote(clientNotePath, clientNote);
+      this.log('Successfully created/updated client note', clientNotePath);
+    } catch (noteError) {
+      this.log('Error creating client note', { client: clientName, error: noteError });
+      return;
+    }
+  }
+
+  /**
+   * Process a single project from Scoro
+   */
+  private async processProject(project: ScoroProject) {
+    // Try to find existing project note by project_id
+    const existingProjectNotes = await this.vault.findNotesByFrontmatter({
+      type: 'scoro_project',
+      project_id: project.project_id
+    });
+
+    if (existingProjectNotes.length > 0) {
+      // Update existing note
+      const projectNote = this.createProjectNote(project);
+      await this.vault.createOrUpdateNote(existingProjectNotes[0], projectNote);
+      this.log('Updated existing project note', existingProjectNotes[0]);
+      return;
+    }
+
+    // Get company name from project directly or lookup by ID
+    let companyName = project.company_name;
+    if (!companyName && project.company_id) {
+      const clientResponse = await this.api.getClients();
+      const clients = clientResponse.items || [];
+      for (const client of clients) {
+        if (client.company_id === project.company_id) {
+          companyName = client.company_name || (client as any).name;
+          break;
+        }
+      }
+    }
+    
+    const rawProjectName = project.project_name || (project as any).name || '';
+    // Sanitize project name by combining all segments
+    const projectName = rawProjectName.split(/[/\\]/).join(' ');
+    
+    // Skip projects with missing required properties
+    if (!companyName || !projectName) {
+      this.log('Skipping project with missing required properties', project);
+      console.warn('Skipping project with missing required properties', project);
+      return;
+    }
+    
+    // Check if client folder exists
+    const clientFolder = this.vault.getClientFolderPath(companyName);
+    const clientFolderExists = await this.vault.folderExists(clientFolder);
+    
+    if (!clientFolderExists) {
+      this.log('Client folder does not exist, skipping project', { client: companyName, project: projectName });
+      NotificationService.showWarning(`Client folder for "${companyName}" not found. Please sync clients first.`);
+      return;
+    }
+    
+    // Then create the project folder using the sanitized project name
+    const projectFolder = this.vault.getProjectFolderPath(
+      companyName, 
+      projectName
+    );
+    
+    this.log('Ensuring project folder exists', projectFolder);
+    await this.vault.ensureFolder(projectFolder);
+    
+    // Create the tasks folder within the project folder using the sanitized project name
+    const tasksFolderPath = this.vault.getTasksFolderPath(
+      companyName, 
+      projectName
+    );
+    this.log('Ensuring tasks folder exists', tasksFolderPath);
+    await this.vault.ensureFolder(tasksFolderPath);
+
+    this.log('Creating project note');
+    const projectNote = this.createProjectNote({
+      ...project,
+      project_name: projectName // Use sanitized project name
+    } as ScoroProject);
+    const projectNotePath = `${projectFolder}/${projectName}.md`;
+    this.log('Saving project note', { path: projectNotePath, content: projectNote });
+    await this.vault.createOrUpdateNote(projectNotePath, projectNote);
+  }
+
+  /**
+   * Process tasks for a specific project
+   */
+  private async processProjectTasks(projectId: string, tasks: ScoroTask[]) {
+    // Get project details
+    const projectResponse = await this.api.getProject(projectId);
+    if (!projectResponse) {
+      this.log('Could not find project', { projectId });
+      return;
+    }
+
+    const project = projectResponse;
+    const companyName = project.company_name || 'Unnamed Company';
+    const projectName = project.project_name || 'Unnamed Project';
+
+    // Process each task
+    for (const task of tasks) {
+      // Try to find existing task note by task_id
+      const existingTaskNotes = await this.vault.findNotesByFrontmatter({
+        type: 'scoro_task',
+        task_id: task.event_id
+      });
+
+      if (existingTaskNotes.length > 0) {
+        // Update existing note
+        const taskNote = this.createTaskNote(task);
+        await this.vault.createOrUpdateNote(existingTaskNotes[0], taskNote);
+        this.log('Updated existing task note', existingTaskNotes[0]);
+        continue;
+      }
+
+      // No existing note found, create new one
+      const taskPath = this.vault.getTaskPath(
+        companyName,
+        projectName,
+        task.event_name
+      );
+      const taskNote = this.createTaskNote(task);
+      await this.vault.createOrUpdateNote(taskPath, taskNote);
+    }
+  }
+
+  /**
+   * Process unassigned tasks
+   */
+  private async processUnassignedTasks(tasks: ScoroTask[]) {
+    this.log('Processing unassigned tasks', { count: tasks.length });
+    const unassignedFolder = this.vault.getUnassignedTasksFolder();
+    await this.vault.ensureFolder(unassignedFolder);
+
+    for (const task of tasks) {
+      const taskPath = this.vault.getUnassignedTaskPath(task.event_name);
+      const taskNote = this.createTaskNote({
+        ...task,
+        project_name: 'Unassigned',
+        company_name: 'Unassigned'
+      });
+      await this.vault.createOrUpdateNote(taskPath, taskNote);
+    }
+  }
+
+  /**
+   * Process a single time entry from Scoro
+   */
+  private async processTimeEntry(entry: ScoroTimeEntry) {
+    try {
+      // Get task details
+      const task = await this.api.getTask(entry.event_id);
+      if (!task) {
+        this.log('Could not find task for time entry', { timeEntryId: entry.time_entry_id, eventId: entry.event_id });
+        NotificationService.showWarning(
+          `Could not find task for time entry: ${entry.time_entry_id}`
+        );
+        return;
+      }
+
+      // Create entry in daily note
+      const date = new Date(entry.datetime_start);
+      const dailyNotePath = this.vault.getDailyNotePath(date);
+      const timeEntryContent = this.createTimeEntryContent(
+        task.event_name,
+        entry.datetime_start,
+        entry.datetime_end,
+        entry.description,
+        task.task_id,
+        entry.time_entry_id
+      );
+
+      await this.vault.appendToDailyNote(dailyNotePath, timeEntryContent);
+      NotificationService.showSuccess(
+        `Added time entry to daily note: ${task.event_name}`
+      );
+    } catch (error) {
+      this.log('Failed to process time entry', { timeEntryId: entry.time_entry_id, error });
+      NotificationService.showError(
+        `Failed to process time entry: ${entry.event_id}`,
+        error
+      );
+    }
+  }
+
   // Helper methods for creating notes
-  private createClientNote(client: any): string {
+  private createClientNote(client: ScoroClient): string {
     this.log('Creating client note for', client);
     const clientName = client.company_name || client.contact_name || client.name;
     const clientId = client.company_id || client.contact_id;
@@ -629,6 +515,7 @@ export class SyncService {
     this.log(`Client note data: name=${clientName}, id=${clientId}, type=${clientType}`);
     
     return `---
+type: scoro_client
 client_id: ${clientId || ''}
 client_name: ${clientName || ''}
 client_type: ${clientType || ''}
@@ -663,11 +550,12 @@ SORT deadline ASC
 - Country: ${address.country || 'N/A'}`;
   }
 
-  private createProjectNote(project: any): string {
+  private createProjectNote(project: ScoroProject): string {
     this.log('Creating project note for', project);
     // Sanitize project name for path construction
     const sanitizedProjectName = project.project_name || project.name || '';
     return `---
+type: scoro_project
 project_id: ${project.project_id || ''}
 project_name: ${sanitizedProjectName}
 status: ${project.status || ''}
@@ -685,11 +573,16 @@ SORT datetime_due ASC
 `;
   }
 
-  private createTaskNote(task: any): string {
+  private createTaskNote(task: ScoroTask): string {
     this.log('Creating task note for', task);
     return `---
-task_id: ${task.task_id || ''}
+type: scoro_task
+task_id: ${task.event_id || ''}
 event_name: ${task.event_name || ''}
+project_id: ${task.project_id || ''}
+project_name: "[[${task.project_name || 'Unassigned'}]]"
+company_id: ${task.company_id || ''}
+company_name: "[[${task.company_name || 'Unassigned'}]]"
 status: ${task.status || ''}
 datetime_due: ${task.datetime_due || ''}
 related_users: ${JSON.stringify(task.related_users || [])}
@@ -704,7 +597,7 @@ last_synced: ${new Date().toISOString()}
 \`\`\`dataview
 TABLE duration, description
 FROM "${this.vault.getDailyNotesFolder()}"
-WHERE contains(time_entry_task_id, "${task.task_id}")
+WHERE contains(time_entry_task_id, "${task.event_id}")
 SORT file.day DESC
 \`\`\`
 `;

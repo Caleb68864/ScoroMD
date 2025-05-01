@@ -327,19 +327,18 @@ export class ScoroApiService {
   // Task-related methods
   
   /**
-   * Fetches the list of all tasks from Scoro
-   * 
-   * @returns Promise resolving to an array of ScoroTask objects
+   * Get tasks from Scoro API
+   * @param options Optional pagination parameters
+   * @returns Promise<ScoroListResponse<ScoroTask>>
    */
-  async getTasks() {
-    const response = await this.post<ScoroListResponse<ScoroTask>>('tasks/list');
-    
-    // Ensure response has items array
-    if (!response.items) {
-      response.items = [];
-    }
-    
-    return response;
+  async getTasks(options?: { page?: number; per_page?: number }): Promise<ScoroListResponse<ScoroTask>> {
+    return this.post<ScoroListResponse<ScoroTask>>('tasks/list', {
+      request: {},
+      ...(options && {
+        page: options.page,
+        per_page: options.per_page
+      })
+    });
   }
 
   /**
@@ -354,6 +353,21 @@ export class ScoroApiService {
       throw new ScoroValidationError('Task ID is required', 'taskId');
     }
     return this.post<ScoroTask>(`tasks/view/${taskId}`);
+  }
+
+  /**
+   * Get detailed task information using the view endpoint
+   */
+  async getTaskView(taskId: string): Promise<any> {
+    try {
+      const response = await this.post<any>(`tasks/view/${taskId}`, {
+        request: {}
+      });
+      return response;
+    } catch (error) {
+      console.error('Failed to get task view:', error);
+      throw error;
+    }
   }
 
   // Time Entry-related methods

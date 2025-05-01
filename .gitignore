@@ -34,3 +34,10 @@ deploy.bat
 
 # Release files
 releases/ 
+
+# Test script
+test-scoro-api.ps1
+scoro-contacts-response.json
+scoro-projects-response.json
+scoro-tasks-response.json
+scoro-time-entries-response.json

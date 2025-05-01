@@ -64,11 +64,11 @@ const DEFAULT_SETTINGS: ScoroSettings = {
  * Main plugin class that handles initialization, settings, and core functionality
  */
 export default class ScoroSyncPlugin extends Plugin {
-  settings: ScoroSettings;
-  syncInterval: number;
+  settings: ScoroSettings = DEFAULT_SETTINGS;
+  syncInterval: number = 0;
   dataviewAPI: any;
-  private syncService: SyncService;
-  private vaultService: VaultService;
+  private syncService!: SyncService;
+  private vaultService!: VaultService;
 
   /**
    * Called when the plugin is loaded
@@ -114,7 +114,7 @@ export default class ScoroSyncPlugin extends Plugin {
         }
         
         await this.syncService.syncAll();
-      } catch (error) {
+      } catch (error: any) {
         NotificationService.showError('Sync failed', error);
       }
     });
@@ -184,7 +184,7 @@ export default class ScoroSyncPlugin extends Plugin {
           // Try to fetch a single client as a test
           await apiService.getClients();
           NotificationService.showSuccess('Successfully connected to Scoro API');
-        } catch (error) {
+        } catch (error: any) {
           NotificationService.showError('API connection test failed', error);
         }
       }
@@ -251,19 +251,28 @@ export default class ScoroSyncPlugin extends Plugin {
    * This will periodically sync data from Scoro at the specified interval
    */
   startSyncInterval() {
-    if (this.syncInterval) {
-      window.clearInterval(this.syncInterval);
-    }
-    this.syncInterval = window.setInterval(
-      async () => {
+    try {
+      // Convert hours to milliseconds
+      const intervalMs = this.settings.syncIntervalHours * 60 * 60 * 1000;
+      
+      // Clear any existing interval
+      if (this.syncInterval) {
+        window.clearInterval(this.syncInterval);
+      }
+      
+      // Set up new interval
+      this.syncInterval = window.setInterval(async () => {
         try {
           await this.syncService.syncAll();
-        } catch (error) {
+        } catch (error: any) {
           NotificationService.showError('Scheduled sync failed', error);
         }
-      },
-      this.settings.syncIntervalHours * 60 * 60 * 1000
-    );
+      }, intervalMs);
+      
+      NotificationService.showInfo(`Scheduled sync enabled (every ${this.settings.syncIntervalHours} hours)`);
+    } catch (error: any) {
+      NotificationService.showError('Failed to start scheduled sync', error);
+    }
   }
 
   /**

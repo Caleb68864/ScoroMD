@@ -44,6 +44,7 @@ export class VaultService {
   private clientsFolder: string = 'Clients';
   private projectsFolderName: string = 'Projects';
   private tasksFolderName: string = 'Tasks';
+  private unassignedTasksFolder: string = 'Unassigned Tasks';
   private app: App;
   private settings: any;
   private developerMode: boolean = false;
@@ -237,7 +238,7 @@ export class VaultService {
     if (!path) return '';
 
     const {
-      preserveUnderscores = true, // Changed default to true to preserve underscores
+      preserveUnderscores = true,
       preserveSlashes = false
     } = options;
 
@@ -259,6 +260,8 @@ export class VaultService {
       let sanitized = basename
         // Replace characters that are definitely not allowed
         .replace(/[*"<>:|?]/g, '')
+        // Only replace forward slashes with dashes if we're not preserving slashes
+        .replace(!preserveSlashes ? /\//g : /(?!)/g, '-')
         // Normalize multiple spaces to single space
         .replace(/\s+/g, ' ')
         .trim();
@@ -394,7 +397,7 @@ export class VaultService {
   async createOrUpdateNote(path: string, content: string): Promise<void> {
     try {
       // Sanitize path
-      const sanitizedPath = this.sanitizeFolderPath(path);
+      const sanitizedPath = this.sanitizePath(path, { preserveSlashes: true });
       
       if (sanitizedPath !== path) {
         console.log(`Path sanitized from "${path}" to "${sanitizedPath}"`);
@@ -566,7 +569,7 @@ export class VaultService {
 
   async readFile(path: string): Promise<string> {
     try {
-      const sanitizedPath = this.sanitizePath(path);
+      const sanitizedPath = this.sanitizePath(path, { preserveSlashes: true });
       
       const file = this.app.vault.getAbstractFileByPath(sanitizedPath) as TFile;
       if (!file) {
@@ -904,6 +907,18 @@ export class VaultService {
     return `${tasksPath}/${sanitizedTask}.md`;
   }
 
+  getUnassignedTasksFolder(): string {
+    return this.sanitizePath(this.unassignedTasksFolder, { preserveSlashes: true });
+  }
+
+  getUnassignedTaskPath(taskName: string): string {
+    const unassignedPath = this.getUnassignedTasksFolder();
+    // First sanitize the task name without preserving slashes to convert them to dashes
+    const sanitizedTask = this.sanitizePath(taskName, { preserveSlashes: false });
+    // Then construct and sanitize the full path with preserveSlashes
+    return this.sanitizePath(`${unassignedPath}/${sanitizedTask}.md`, { preserveSlashes: true });
+  }
+
   /**
    * Logs debug information if developerMode is enabled in settings
    * @param message Debug message
@@ -936,5 +951,66 @@ export class VaultService {
       console.error(`Error checking if folder exists: ${path}`, error);
       return false;
     }
+  }
+
+  /**
+   * Find all project notes in the vault
+   * Returns an array of project note paths
+   */
+  async findProjectNotes(clientsFolder: string): Promise<string[]> {
+    const projectNotes: string[] = [];
+    
+    // Recursively search through clients folder for project notes
+    const searchFolder = async (folderPath: string) => {
+      const files = await this.app.vault.adapter.list(folderPath);
+      
+      for (const file of files.files) {
+        // Only look at markdown files
+        if (!file.endsWith('.md')) continue;
+        
+        const content = await this.readFile(file);
+        // Check if this is a project note by looking for project_id in frontmatter
+        if (content.includes('project_id:')) {
+          projectNotes.push(file);
+        }
+      }
+      
+      // Recursively search subfolders
+      for (const folder of files.folders) {
+        await searchFolder(folder);
+      }
+    };
+    
+    await searchFolder(clientsFolder);
+    return projectNotes;
+  }
+
+  /**
+   * Find notes by their frontmatter properties
+   * @param properties Object containing key-value pairs to match in frontmatter
+   * @returns Array of file paths that match the criteria
+   */
+  async findNotesByFrontmatter(properties: Record<string, any>): Promise<string[]> {
+    const matchingNotes: string[] = [];
+    
+    // Get all markdown files in the vault
+    const files = this.app.vault.getMarkdownFiles();
+    
+    for (const file of files) {
+      // Get the file's frontmatter from the metadata cache
+      const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      if (!frontmatter) continue;
+      
+      // Check if all properties match
+      const matches = Object.entries(properties).every(([key, value]) => 
+        frontmatter[key] === value
+      );
+      
+      if (matches) {
+        matchingNotes.push(file.path);
+      }
+    }
+    
+    return matchingNotes;
   }
 } 
