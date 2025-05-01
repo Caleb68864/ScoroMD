@@ -1,6 +1,7 @@
 import { App, TFile, Vault, Modal } from 'obsidian';
 import { NotificationService } from '../utils/notifications';
 import { DailyNoteTimeEntry } from '../models/scoro-types';
+import { SanitizationService } from './sanitization-service';
 
 /**
  * Modal dialog for presenting choices to the user
@@ -209,23 +210,7 @@ export class VaultService {
    * @returns Sanitized value safe for use in paths and filenames
    */
   private sanitizeScoro(value: string): string {
-    if (!value) return '';
-
-    return value
-      // Replace characters that are definitely not allowed in paths
-      .replace(/[*"<>:|?]/g, '')
-      // Replace comma followed by space with just a space
-      .replace(/,\s+/g, ' ')
-      // Replace any remaining commas with nothing
-      .replace(/,/g, '')
-      // Normalize multiple spaces to single space
-      .replace(/\s+/g, ' ')
-      // Preserve underscores
-      // Replace remaining periods with underscores (except extensions)
-      .replace(/\.(?!\w+$)/g, '_')
-      // Remove trailing periods
-      .replace(/\.+$/, '')
-      .trim();
+    return SanitizationService.sanitizeName(value);
   }
 
   /**
@@ -236,66 +221,9 @@ export class VaultService {
    * @returns Sanitized path
    */
   private sanitizePath(path: string, options: {
-    preserveUnderscores?: boolean;  // Whether to preserve underscores or convert to spaces
     preserveSlashes?: boolean;      // Whether to preserve path separators
   } = {}): string {
-    if (!path) return '';
-
-    const {
-      preserveUnderscores = true,
-      preserveSlashes = false
-    } = options;
-
-    // Split path into segments if we're preserving the structure
-    const segments = preserveSlashes ? path.split(/[/\\]+/) : [path];
-
-    return segments.map(segment => {
-      // Handle file extension
-      const extensionMatch = segment.match(/(\.[a-zA-Z0-9]+)$/);
-      let basename = segment;
-      let extension = '';
-      
-      if (extensionMatch) {
-        extension = extensionMatch[0];
-        basename = segment.substring(0, segment.length - extension.length);
-      }
-
-      // Replace invalid characters
-      let sanitized = basename
-        // Replace characters that are definitely not allowed
-        .replace(/[*"<>:|?]/g, '')
-        // Only replace forward slashes with dashes if we're not preserving slashes
-        .replace(!preserveSlashes ? /\//g : /(?!)/g, '-')
-        // Normalize multiple spaces to single space
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      // Handle underscores based on option
-      if (!preserveUnderscores) {
-        sanitized = sanitized
-          .replace(/_ /g, ' ')
-          .replace(/ _/g, ' ')
-          .replace(/ _ /g, ' ')
-          .replace(/_/g, ' ');
-      }
-
-      // Clean up periods
-      sanitized = sanitized
-        .replace(/\.+$/, '')  // Remove trailing periods
-        .replace(/\.(?!\w+$)/g, '_'); // Replace remaining periods with underscores (except extensions)
-
-      // Ensure we have a valid name
-      if (!sanitized) {
-        sanitized = 'unnamed';
-      }
-
-      // Add back extension if it existed
-      if (extension) {
-        sanitized += extension;
-      }
-
-      return sanitized;
-    }).join(preserveSlashes ? '/' : ' ');
+    return SanitizationService.sanitizePath(path, options.preserveSlashes);
   }
 
   /**
@@ -304,7 +232,7 @@ export class VaultService {
    * @returns Sanitized path with structure preserved
    */
   private sanitizeFolderPath(path: string): string {
-    return this.sanitizePath(path, { preserveSlashes: true, preserveUnderscores: true });
+    return SanitizationService.sanitizeFolderPath(path);
   }
 
   /**
@@ -313,7 +241,7 @@ export class VaultService {
    * @returns Sanitized name
    */
   private sanitizeFileName(name: string): string {
-    return this.sanitizePath(name, { preserveUnderscores: true });
+    return SanitizationService.sanitizeFileName(name);
   }
 
   getDailyNotePath(date: Date): string {

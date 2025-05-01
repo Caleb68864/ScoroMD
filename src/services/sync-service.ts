@@ -1,6 +1,7 @@
 import { ScoroApiService } from './scoro-api';
 import { VaultService } from './vault-service';
 import { NotificationService, ScoroValidationError, ScoroSyncError } from '../utils/notifications';
+import { SanitizationService } from './sanitization-service';
 import {
   ScoroClient,
   ScoroProject,
@@ -382,7 +383,9 @@ export class SyncService {
    * Process a single client from Scoro
    */
   private async processClient(client: ScoroClient) {
-    const clientName = client.company_name || client.contact_name || (client as any).name;
+    const clientName = SanitizationService.sanitizeName(
+      client.company_name || client.contact_name || (client as any).name
+    );
     const clientId = client.company_id || client.contact_id;
     
     this.log('Processing client', { id: clientId, name: clientName });
@@ -466,21 +469,21 @@ export class SyncService {
     }
 
     // Get company name from project directly or lookup by ID
-    let companyName = project.company_name;
+    let companyName = SanitizationService.sanitizeName(project.company_name || '');
     if (!companyName && project.company_id) {
       const clientResponse = await this.api.getClients();
       const clients = clientResponse.items || [];
       for (const client of clients) {
         if (client.company_id === project.company_id) {
-          companyName = client.company_name || (client as any).name;
+          companyName = SanitizationService.sanitizeName(client.company_name || (client as any).name || '');
           break;
         }
       }
     }
     
     const rawProjectName = project.project_name || (project as any).name || '';
-    // Sanitize project name by combining all segments
-    const projectName = rawProjectName.split(/[/\\]/).join(' ');
+    // Sanitize project name
+    const projectName = SanitizationService.sanitizeName(rawProjectName);
     
     // Skip projects with missing required properties
     if (!companyName || !projectName) {
@@ -658,15 +661,15 @@ export class SyncService {
       const detailedTask = {
         ...task,
         ...taskResponse,
-        project_name: project.project_name,
-        company_name: project.company_name
+        project_name: SanitizationService.sanitizeName(project.project_name || ''),
+        company_name: SanitizationService.sanitizeName(project.company_name || '')
       };
 
-      // Get the task path
+      // Get the task path using sanitized names
       const taskPath = this.vault.getTaskPath(
-        project.company_name || 'Unknown Company',
-        project.project_name,
-        task.event_name
+        SanitizationService.sanitizeName(project.company_name || 'Unknown Company'),
+        SanitizationService.sanitizeName(project.project_name || ''),
+        SanitizationService.sanitizeName(task.event_name || '')
       );
 
       // Create or update the task note
@@ -691,7 +694,9 @@ export class SyncService {
   // Helper methods for creating notes
   private createClientNote(client: ScoroClient): string {
     this.log('Creating client note for', client);
-    const clientName = client.company_name || client.contact_name || client.name;
+    const clientName = SanitizationService.sanitizeName(
+      client.company_name || client.contact_name || client.name
+    );
     const clientId = client.company_id || client.contact_id;
     const clientType = client.company_type || client.contact_type;
     
@@ -736,7 +741,7 @@ SORT deadline ASC
   private createProjectNote(project: ScoroProject): string {
     this.log('Creating project note for', project);
     // Sanitize project name for path construction
-    const sanitizedProjectName = project.project_name;
+    const sanitizedProjectName = SanitizationService.sanitizeName(project.project_name);
     return `---
 type: scoro_project
 project_id: ${project.project_id || ''}
@@ -750,7 +755,7 @@ last_synced: ${new Date().toISOString()}
 ## Tasks
 \`\`\`dataview
 TABLE status, datetime_due as "Due Date", related_users as "Assigned To"
-FROM "${this.vault.getClientsFolder()}/${project.company_name}/${this.vault.getProjectsFolderName()}/${sanitizedProjectName}/${this.vault.getTasksFolderName()}"
+FROM "${this.vault.getClientsFolder()}/${SanitizationService.sanitizeName(project.company_name)}/${this.vault.getProjectsFolderName()}/${sanitizedProjectName}/${this.vault.getTasksFolderName()}"
 SORT datetime_due ASC
 \`\`\`
 `;
@@ -758,15 +763,19 @@ SORT datetime_due ASC
 
   private createTaskNote(task: ScoroTask): string {
     this.log('Creating task note for', task);
+    const sanitizedProjectName = SanitizationService.sanitizeName(task.project_name || 'Unassigned');
+    const sanitizedCompanyName = SanitizationService.sanitizeName(task.company_name || 'Unassigned');
+    const sanitizedEventName = SanitizationService.sanitizeName(task.event_name || '');
+    
     return `---
 type: scoro_task
 task_id: ${task.event_id || ''}
 event_id: ${task.event_id || ''}
-event_name: ${task.event_name || ''}
+event_name: ${sanitizedEventName}
 project_id: ${task.project_id || ''}
-project_name: "[[${task.project_name || 'Unassigned'}]]"
+project_name: "[[${sanitizedProjectName}]]"
 company_id: ${task.company_id || ''}
-company_name: "[[${task.company_name || 'Unassigned'}]]"
+company_name: "[[${sanitizedCompanyName}]]"
 status: ${task.status || ''}
 datetime_due: ${task.datetime_due || ''}
 related_users: ${JSON.stringify(task.related_users || [])}
