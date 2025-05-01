@@ -148,32 +148,138 @@ export class SyncService {
    */
   private async syncProjects() {
     try {
-      // Get projects from API
-      const response = await this.api.getProjects();
-      this.log('Projects API response', { 
-        status: response.status,
-        itemCount: response.items?.length || 0,
-        items: response.items
-      });
+      let allProjects: ScoroProject[] = [];
+      let currentPage = 1;
+      let hasMorePages = true;
+      const perPage = 25; // Using smaller page size since we're using detailed_response
       
-      // Process each project
-      if (!response.items || response.items.length === 0) {
-        this.log('No projects found in API response');
-        NotificationService.showWarning('No projects found in Scoro');
-        return;
+      this.log('Starting project sync with pagination');
+      
+      while (hasMorePages) {
+        this.log('Fetching projects page', { page: currentPage });
+        
+        // Get projects from API with pagination and detailed response
+        const response = await this.api.getProjects({
+          page: currentPage,
+          per_page: perPage
+        });
+        
+        this.log('Projects API response', { 
+          status: response.status,
+          itemCount: response.items?.length || 0,
+          hasMore: response.has_more
+        });
+        
+        // Add projects from this page to our collection
+        if (response.items && response.items.length > 0) {
+          allProjects = allProjects.concat(response.items);
+        }
+        
+        // Check if we have more pages
+        if (!response.has_more) {
+          hasMorePages = false;
+        } else {
+          currentPage++;
+          // Add a small delay to respect rate limits
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
       }
-
-      for (const project of response.items) {
+      
+      this.log(`Total projects found: ${allProjects.length}`);
+      
+      // Process each project and its tasks
+      for (const project of allProjects) {
         this.log('Processing project', { 
           id: project.project_id,
           name: project.project_name,
           company: project.company_name
         });
+        
+        // First process the project itself
         await this.processProject(project);
+        
+        // Then, if task sync is enabled and we're syncing projects, sync tasks for this project
+        if (this.getSyncSettings().syncTasks && this.getSyncSettings().syncProjects) {
+          await this.syncProjectTasks(project);
+        }
       }
     } catch (error) {
       this.log('Failed to sync projects', error);
       NotificationService.showError('Failed to sync projects', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Syncs tasks for a specific project
+   */
+  private async syncProjectTasks(project: ScoroProject) {
+    try {
+      let allTasks: ScoroTask[] = [];
+      let currentPage = 1;
+      let hasMorePages = true;
+      const perPage = 25; // Using smaller page size since we're using detailed_response
+      
+      this.log('Starting task sync for project', { 
+        projectId: project.project_id, 
+        projectName: project.project_name 
+      });
+      
+      while (hasMorePages) {
+        this.log('Fetching tasks page', { page: currentPage });
+        
+        // Get tasks from API with pagination, detailed response, and project filter
+        const response = await this.api.getTasks({
+          page: currentPage,
+          per_page: perPage,
+          filter: {
+            project_id: project.project_id
+          }
+        });
+        
+        this.log('Tasks API response', { 
+          status: response.status,
+          itemCount: response.items?.length || 0,
+          hasMore: response.has_more
+        });
+        
+        // Add tasks from this page to our collection
+        if (response.items && response.items.length > 0) {
+          allTasks = allTasks.concat(response.items);
+        }
+        
+        // Check if we have more pages
+        if (!response.has_more) {
+          hasMorePages = false;
+        } else {
+          currentPage++;
+          // Add a small delay to respect rate limits
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+      
+      this.log(`Total tasks found for project: ${allTasks.length}`);
+      
+      // Process each task
+      for (const task of allTasks) {
+        try {
+          await this.processTask(project, task);
+        } catch (taskError) {
+          this.log('Failed to process task', {
+            taskId: task.event_id,
+            taskName: task.event_name,
+            error: taskError
+          });
+          // Continue with next task even if one fails
+          continue;
+        }
+      }
+    } catch (error) {
+      this.log('Failed to sync tasks for project', { 
+        projectId: project.project_id, 
+        error 
+      });
+      NotificationService.showError('Failed to sync tasks for project', error);
       throw error;
     }
   }
@@ -424,14 +530,13 @@ export class SyncService {
    * Process tasks for a specific project
    */
   private async processProjectTasks(projectId: string, tasks: ScoroTask[]) {
-    // Get project details
-    const projectResponse = await this.api.getProject(projectId);
-    if (!projectResponse) {
-      this.log('Could not find project', { projectId });
+    // Find project in our existing projects list
+    const project = tasks[0]; // We can use the project info from any task since they all have the same project info
+    if (!project) {
+      this.log('No tasks found for project', { projectId });
       return;
     }
 
-    const project = projectResponse;
     const companyName = project.company_name || 'Unnamed Company';
     const projectName = project.project_name || 'Unnamed Project';
 
@@ -536,6 +641,53 @@ export class SyncService {
     }
   }
 
+  /**
+   * Process a single task from Scoro
+   */
+  private async processTask(project: ScoroProject, task: ScoroTask) {
+    try {
+      if (!task.event_id) {
+        this.log('Task has no ID, skipping', {
+          taskName: task.event_name
+        });
+        return;
+      }
+
+      // Get detailed task information
+      const taskResponse = await this.api.getTaskView(task.event_id);
+      const detailedTask = {
+        ...task,
+        ...taskResponse,
+        project_name: project.project_name,
+        company_name: project.company_name
+      };
+
+      // Get the task path
+      const taskPath = this.vault.getTaskPath(
+        project.company_name || 'Unknown Company',
+        project.project_name,
+        task.event_name
+      );
+
+      // Create or update the task note
+      const taskNote = this.createTaskNote(detailedTask);
+      await this.vault.createOrUpdateNote(taskPath, taskNote);
+      
+      this.log('Successfully processed task', {
+        taskId: task.event_id,
+        taskName: task.event_name,
+        path: taskPath
+      });
+    } catch (error) {
+      this.log('Failed to process task', {
+        taskId: task.event_id,
+        taskName: task.event_name,
+        error
+      });
+      NotificationService.showWarning(`Failed to process task: ${task.event_name}`);
+    }
+  }
+
   // Helper methods for creating notes
   private createClientNote(client: ScoroClient): string {
     this.log('Creating client note for', client);
@@ -609,6 +761,7 @@ SORT datetime_due ASC
     return `---
 type: scoro_task
 task_id: ${task.event_id || ''}
+event_id: ${task.event_id || ''}
 event_name: ${task.event_name || ''}
 project_id: ${task.project_id || ''}
 project_name: "[[${task.project_name || 'Unassigned'}]]"

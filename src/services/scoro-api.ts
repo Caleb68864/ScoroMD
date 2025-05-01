@@ -303,10 +303,17 @@ export class ScoroApiService {
    * 
    * @returns Promise resolving to an array of ScoroProject objects
    */
-  async getProjects() {
+  async getProjects(options?: { 
+    page?: number; 
+    per_page?: number;
+  }) {
     const response = await this.post<ScoroListResponse<ScoroProject>>('projects/list', {
       request: {},
-      detailed_response: 1
+      detailed_response: 1,
+      ...(options && {
+        page: options.page,
+        per_page: options.per_page
+      })
     });
     
     // Use any type for flexible property access 
@@ -359,12 +366,18 @@ export class ScoroApiService {
   
   /**
    * Get tasks from Scoro API
-   * @param options Optional pagination parameters
+   * @param options Optional pagination and filter parameters
    * @returns Promise<ScoroListResponse<ScoroTask>>
    */
-  async getTasks(options?: { page?: number; per_page?: number }): Promise<ScoroListResponse<ScoroTask>> {
+  async getTasks(options?: { 
+    page?: number; 
+    per_page?: number;
+    filter?: {
+      project_id?: string;
+    }
+  }): Promise<ScoroListResponse<ScoroTask>> {
     const response = await this.post<ScoroListResponse<ScoroTask>>('tasks/list', {
-      request: {},
+      request: options?.filter || {},
       detailed_response: 1,
       ...(options && {
         page: options.page,

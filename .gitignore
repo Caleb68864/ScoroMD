@@ -37,7 +37,13 @@ releases/
 
 # Test script
 test-scoro-api.ps1
+test-scoro-client-projects.ps1
+test-scoro-project-tasks.ps1
+
+# Test response files
 scoro-contacts-response.json
 scoro-projects-response.json
 scoro-tasks-response.json
 scoro-time-entries-response.json
+scoro-krfm-projects.json
+scoro-drawbar-tasks.json
